@@ -44,9 +44,34 @@ test("cli init scaffolds .gitcut.json and refuses overwrite without --force", ()
 
 test("cli help prints usage and exits 0", () => {
   const out = execFileSync("node", [CLI, "help"], { encoding: "utf8" });
+  assert.match(out, /gitcut doctor/);
+  assert.match(out, /gitcut setup-github/);
   assert.match(out, /gitcut create/);
   assert.match(out, /gitcut repo/);
   assert.match(out, /gitcut init/);
+});
+
+test("cli setup-github writes .gitcut.json and .github/workflows/gitcut.yml", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gc-gh-"));
+  try {
+    const out = execFileSync(
+      "node",
+      [CLI, "setup-github", "--dir", dir, "--auto-preview", "--name", "Acme App", "--accent", "#10B981"],
+      { encoding: "utf8" },
+    );
+    assert.match(out, /CLAUDE_CODE_OAUTH_TOKEN/);
+    const cfg = JSON.parse(readFileSync(join(dir, ".gitcut.json"), "utf8"));
+    assert.equal(cfg.autoPreview, true);
+    assert.equal(cfg.product.name, "Acme App");
+    assert.equal(cfg.brand.accent, "#10B981");
+
+    const wf = readFileSync(join(dir, ".github/workflows/gitcut.yml"), "utf8");
+    assert.match(wf, /zekooo0\/gitcut\/\.github\/workflows\/pipeline\.yml@main/);
+
+    assert.throws(() => execFileSync("node", [CLI, "setup-github", "--dir", dir], { stdio: "pipe" }));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("cli repo --plan-only builds repo.json, BRIEF.md, and copies README assets", () => {

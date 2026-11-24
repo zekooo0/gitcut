@@ -26,46 +26,51 @@ and SFX—or crisp silent/captioned output.
 
 ## Quickstart 1: Add to any GitHub repo (no server needed)
 
-1. Add `.gitcut.json` at the root of your app repo (see [template/sites/example.json](template/sites/example.json) or run `gitcut init`).
-2. Copy [examples/gitcut.yml](examples/gitcut.yml) into `.github/workflows/gitcut.yml` in your repo (it points to `zekooo0/gitcut` out of the box, or change it to your fork).
-3. Add repository secrets (**Settings → Secrets and variables → Actions**):
+Run one command inside your app repo (or copy the two files manually):
+
+```bash
+node /path/to/gitcut/template/scripts/cli.ts setup-github --auto-preview --name "My App"
+```
+
+That creates `.gitcut.json` and `.github/workflows/gitcut.yml` (copied from [examples/gitcut.yml](examples/gitcut.yml)) and prints the direct link to your repo's GitHub Secrets page.
+
+Then:
+1. Add repository secrets (**Settings → Secrets and variables → Actions**):
    - `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`)
    - Optional: `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (for the planner), `ELEVENLABS_API_KEY` (omit for silent/captioned mode), `DEMO_EMAIL` / `DEMO_PASSWORD` (if your app requires login), `YOUTUBE_*` / `SLACK_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL` / `LINEAR_API_KEY` / `CLICKUP_TOKEN`.
-4. Comment `/gitcut` (or `/gitcut plan url=https://your-preview.vercel.app`) on any PR!
+2. Commit & push those two files, then comment `/gitcut` (or `/gitcut plan url=https://your-preview.vercel.app`) on any PR!
 
 Each film is stored on an orphan branch `video/<slug>` in your repo (never touching `main`), and
 preview/final MP4s are published as GitHub Releases using `GITHUB_TOKEN`.
 
 ---
 
-## Quickstart 2: Local CLI (works without GitHub PRs)
+## Quickstart 2: Local CLI & Guided Wizard (works without GitHub PRs)
 
-Requirements: Node 24+, Claude Code CLI signed in, `ffmpeg` (for contact sheets and SFX levelling).
+Requirements: Node 24+, Claude Code CLI signed in, `jq`, optional `ffmpeg` (contact sheets & SFX).
 
 ```bash
 cd template
 npm ci
-npx playwright install chromium
 
-# 1. Optional: scaffold .gitcut.json in your app repo
-node scripts/cli.ts init --url http://localhost:3000 --name "My App"
+# Check your setup in 2 seconds:
+node scripts/cli.ts doctor
 
-# 2. Generate a 15-30s repository reel from ANY GitHub repo or local folder (no browser needed!)
+# Launch the interactive wizard (no flags to remember!):
+node scripts/cli.ts
+
+# Or run directly via flags:
+# 1. Generate a 15-30s repository reel from ANY GitHub repo or local folder (no browser needed!)
 node scripts/cli.ts repo zekooo0/gitcut --format vertical --captions
-# Or from a local directory:
-node scripts/cli.ts repo . --format landscape
 
-# 3. Generate a complete UI feature film from a local server or any live URL (no PR needed!)
+# 2. Generate a live-UI feature film (install Playwright once: npx playwright install chromium)
 node scripts/cli.ts create \
   --url http://localhost:3000 \
   --title "Dark mode toggle" \
   --brief "Users can now switch between light and dark themes from Settings." \
   --routes /settings
 
-# Or film a GitHub PR against its preview deployment:
-node scripts/cli.ts create --pr your-org/your-app#42 --url https://pr-42.preview.example.com
-
-# 4. Iterate in plain English, then render the final MP4:
+# 3. Iterate in plain English, then render the final MP4:
 node scripts/cli.ts edit public/features/dark-mode-toggle "shorter intro, punchier end card"
 node scripts/cli.ts render public/features/dark-mode-toggle --out ./dark-mode.mp4
 ```

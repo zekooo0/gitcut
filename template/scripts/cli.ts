@@ -2,64 +2,74 @@
 /**
  * Unified local CLI for GitCut.
  *
- *   gitcut init      [--url <url>] [--name <product>] [--website <url>] [--accent <#hex>] [--out <file>] [--force]
- *   gitcut create    (--pr owner/repo#123 | --url <url> --brief <text> [--brief-file <md>])
- *                    [--title <title>] [--routes /a,/b] [--site <name|path>] [--format <preset>] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
- *   gitcut repo      <owner/repo | github-url | local-dir> [--format vertical|square|landscape] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
- *   gitcut plan      ...same planning options as create...
- *   gitcut capture   <dir>
- *   gitcut film      <dir> [--pr owner/repo#123] [--format <preset>] [--captions] [--audio auto|elevenlabs|silent]
- *   gitcut edit      <dir> <request...> [--pr owner/repo#123] [--audio auto|elevenlabs|silent]
- *   gitcut render    <dir> [--out <video.mp4>]
- *   gitcut subtitles <dir>
- *   gitcut notify    --video <url> [--title <t>] [--youtube <url>] [--captions <url>] [--pr owner/repo#123] [--linear ENG-123]
- *   gitcut discover  <site-or-url> <path> [--json]
+ *   gitcut                   Interactive wizard (when run in a terminal with no args)
+ *   gitcut doctor            Check local prerequisites (Node, Claude Code, jq, ffmpeg, gh)
+ *   gitcut setup-github      Generate .gitcut.json + .github/workflows/gitcut.yml for your repo
+ *   gitcut init              Scaffold .gitcut.json only
+ *   gitcut repo              <owner/repo | github-url | local-dir> [--format vertical|square|landscape] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
+ *   gitcut create            (--pr owner/repo#123 | --url <url> --brief <text> [--brief-file <md>])
+ *                            [--title <title>] [--routes /a,/b] [--site <name|path>] [--format <preset>] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
+ *   gitcut plan              ...same planning options as create...
+ *   gitcut capture           <dir>
+ *   gitcut film              <dir> [--pr owner/repo#123] [--format <preset>] [--captions] [--audio auto|elevenlabs|silent]
+ *   gitcut edit              <dir> <request...> [--pr owner/repo#123] [--audio auto|elevenlabs|silent]
+ *   gitcut render            <dir> [--out <video.mp4>]
+ *   gitcut subtitles         <dir>
+ *   gitcut notify            --video <url> [--title <t>] [--youtube <url>] [--captions <url>] [--pr owner/repo#123] [--linear ENG-123]
+ *   gitcut discover          <site-or-url> <path> [--json]
  *   gitcut help
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { slugifyTitle } from "./brief.ts";
+import { detectGitHubRepo, formatDoctorReport, runDoctorChecks } from "./lib/doctor.ts";
 import { slugFor } from "./slug.ts";
 
 const TEMPLATE_DIR = new URL("..", import.meta.url).pathname;
+const REPO_ROOT = resolve(TEMPLATE_DIR, "..");
 
 export const CLI_HELP = `GitCut CLI
 
 Usage:
-  gitcut init      [--url <url>] [--name <product>] [--website <url>] [--accent <#hex>] [--out .gitcut.json] [--force]
-  gitcut create    [--pr owner/repo#123 | --brief <text> | --brief-file <md>] [--url <url>] [--auto-preview] [--title <title>] [--routes /a,/b] [--site <name|path>] [--format landscape|square|vertical|16:9|1:1|9:16] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
-  gitcut repo      <owner/repo | github-url | local-dir> [--format vertical|square|landscape|9:16|1:1|16:9] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
-  gitcut plan      ...same planning options as create (stops after capture.json + BRIEF.md)...
-  gitcut capture   <dir>
-  gitcut film      <dir> [--pr owner/repo#123] [--format <preset>] [--captions] [--audio auto|elevenlabs|silent]
-  gitcut edit      <dir> <request...> [--pr owner/repo#123] [--audio auto|elevenlabs|silent]
-  gitcut render    <dir> [--out <file.mp4>]
-  gitcut subtitles <dir>
-  gitcut notify    --video <url> [--title <t>] [--youtube <url>] [--captions <url>] [--pr owner/repo#123] [--linear ENG-123]
-  gitcut discover  <site-or-url> <path> [--json]
+  gitcut                   Interactive guided wizard (easiest way to start!)
+  gitcut doctor            Check local prerequisites (Node 24+, Claude Code, jq, ffmpeg, gh)
+  gitcut setup-github      Add .gitcut.json + .github/workflows/gitcut.yml to your repo
+  gitcut init              [--url <url>] [--auto-preview] [--name <product>] [--website <url>] [--accent <#hex>] [--out .gitcut.json] [--force]
+  gitcut repo              <owner/repo | github-url | local-dir> [--format vertical|square|landscape|9:16|1:1|16:9] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
+  gitcut create            [--pr owner/repo#123 | --brief <text> | --brief-file <md>] [--url <url>] [--auto-preview] [--title <title>] [--routes /a,/b] [--site <name|path>] [--format landscape|square|vertical|16:9|1:1|9:16] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
+  gitcut plan              ...same planning options as create (stops after capture.json + BRIEF.md)...
+  gitcut capture           <dir>
+  gitcut film              <dir> [--pr owner/repo#123] [--format <preset>] [--captions] [--audio auto|elevenlabs|silent]
+  gitcut edit              <dir> <request...> [--pr owner/repo#123] [--audio auto|elevenlabs|silent]
+  gitcut render            <dir> [--out <file.mp4>]
+  gitcut subtitles         <dir>
+  gitcut notify            --video <url> [--title <t>] [--youtube <url>] [--captions <url>] [--pr owner/repo#123] [--linear ENG-123]
+  gitcut discover          <site-or-url> <path> [--json]
   gitcut help
 
 Examples:
-  # 1. Scaffold .gitcut.json in your web app repo
-  gitcut init --url http://localhost:3000 --name "My App"
+  # 0. First time? Check your setup or launch the interactive wizard
+  gitcut doctor
+  gitcut
 
-  # 2. Generate a video directly from a local dev server (no GitHub PR required!)
+  # 1. Set up GitHub Actions in your app repo (writes .gitcut.json + .github/workflows/gitcut.yml)
+  gitcut setup-github --auto-preview --name "My App"
+
+  # 2. Generate a 15-30s repository showcase reel from ANY GitHub repo (no browser needed!)
+  gitcut repo zekooo0/gitcut --format vertical --captions
+
+  # 3. Generate a live-UI feature video from a local server or staging URL
   gitcut create \\
     --url http://localhost:3000 \\
     --title "Dark mode toggle" \\
     --brief "Users can now switch between light and dark themes in Settings." \\
     --routes /settings
 
-  # 3. Generate a 15-30s repository showcase reel directly from a GitHub repo or local folder (no browser needed!)
-  gitcut repo zekooo0/gitcut --format vertical --captions
-
-  # 4. Generate a video from a GitHub PR against a preview URL
-  gitcut create --pr owner/repo#42 --url https://pr-42.preview.example.com
-
-  # 5. Edit the film in plain English and render the final MP4
+  # 4. Edit the film in plain English and render the final MP4
   gitcut edit public/features/dark-mode-toggle "shorter intro, brighter highlight"
   gitcut render public/features/dark-mode-toggle --out ./dark-mode.mp4
 
@@ -69,15 +79,16 @@ Audio:
 
 export function buildInitialConfig(opts: {
   url?: string;
+  autoPreview?: boolean;
   name?: string;
   website?: string;
   accent?: string;
   withLogin?: boolean;
 }) {
-  const baseUrl = opts.url || "https://staging.example.com";
   const name = opts.name || "My App";
   const cfg: Record<string, unknown> = {
-    baseUrl,
+    ...(opts.autoPreview ? { autoPreview: true } : {}),
+    ...(opts.url || !opts.autoPreview ? { baseUrl: opts.url || "https://staging.example.com" } : {}),
     viewport: { width: 1440, height: 900, dpr: 2 },
     panel: "auto",
     hide: ["#hubspot-messages-iframe-container", "iframe[title*=chat i]"],
@@ -106,6 +117,53 @@ export function buildInitialConfig(opts: {
     };
   }
   return cfg;
+}
+
+export function runSetupGitHub(opts: {
+  dir?: string;
+  url?: string;
+  autoPreview?: boolean;
+  name?: string;
+  website?: string;
+  accent?: string;
+  withLogin?: boolean;
+  pipelineRepo?: string;
+  force?: boolean;
+}): { configPath: string; workflowPath: string; secretsUrl: string | null } {
+  const targetDir = resolve(opts.dir ?? process.cwd());
+  const configPath = join(targetDir, ".gitcut.json");
+  const workflowDir = join(targetDir, ".github", "workflows");
+  const workflowPath = join(workflowDir, "gitcut.yml");
+
+  if (!opts.force) {
+    if (existsSync(configPath)) throw new Error(`${configPath} already exists. Pass --force to overwrite.`);
+    if (existsSync(workflowPath)) throw new Error(`${workflowPath} already exists. Pass --force to overwrite.`);
+  }
+
+  const cfg = buildInitialConfig({
+    url: opts.url,
+    autoPreview: opts.autoPreview,
+    name: opts.name,
+    website: opts.website,
+    accent: opts.accent,
+    withLogin: opts.withLogin,
+  });
+  mkdirSync(targetDir, { recursive: true });
+  writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n");
+
+  const examplePath = join(REPO_ROOT, "examples", "gitcut.yml");
+  let workflow = readFileSync(examplePath, "utf8");
+  if (opts.pipelineRepo && opts.pipelineRepo !== "zekooo0/gitcut") {
+    workflow = workflow.replaceAll("zekooo0/gitcut", opts.pipelineRepo);
+  }
+  mkdirSync(workflowDir, { recursive: true });
+  writeFileSync(workflowPath, workflow);
+
+  const ghRepo = detectGitHubRepo(targetDir);
+  const secretsUrl = ghRepo
+    ? `https://github.com/${ghRepo.owner}/${ghRepo.repo}/settings/secrets/actions`
+    : null;
+  return { configPath, workflowPath, secretsUrl };
 }
 
 function runSync(cmd: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}) {
@@ -205,10 +263,157 @@ async function runCreative(
   }
 }
 
+async function runWizard() {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const ask = async (q: string, fallback = "") => {
+    const suffix = fallback ? ` [${fallback}]` : "";
+    const ans = (await rl.question(`${q}${suffix}: `)).trim();
+    return ans || fallback;
+  };
+  try {
+    console.log("\n🎬 Welcome to GitCut — what would you like to do?\n");
+    console.log("  1) Make a 15-30s Repo Reel from a GitHub repo or local folder (easiest, no browser needed)");
+    console.log("  2) Make a feature video from a live website / local dev server");
+    console.log("  3) Set up GitHub Actions (/gitcut PR videos) in this repository");
+    console.log("  4) Check my local setup (doctor)\n");
+    const choice = await ask("Choose 1-4", "1");
+
+    if (choice === "4") {
+      rl.close();
+      const report = formatDoctorReport(runDoctorChecks());
+      console.log("\n" + report.text);
+      if (!report.passed) process.exit(1);
+      return;
+    }
+
+    if (choice === "3") {
+      const name = await ask("Product name", "My App");
+      const previewAns = (await ask("Use automatic Vercel/Netlify/Cloudflare PR preview URLs? (y/n)", "y")).toLowerCase();
+      const autoPreview = previewAns.startsWith("y");
+      const url = autoPreview ? "" : await ask("Staging URL", "https://staging.example.com");
+      const loginAns = (await ask("Does your app require email/password login? (y/n)", "n")).toLowerCase();
+      rl.close();
+      const res = runSetupGitHub({ name, autoPreview, url: url || undefined, withLogin: loginAns.startsWith("y") });
+      printSetupGitHubNextSteps(res);
+      return;
+    }
+
+    const fmtChoice = await ask("Video format: 1) vertical 9:16  2) square 1:1  3) landscape 16:9", choice === "1" ? "1" : "3");
+    const format = fmtChoice === "1" ? "vertical" : fmtChoice === "2" ? "square" : "landscape";
+    const capAns = (await ask("Burn synced captions into the video? (y/n)", "y")).toLowerCase();
+    const captions = capAns.startsWith("y");
+    const audio = process.env.ELEVENLABS_API_KEY ? "auto" : "silent";
+
+    if (choice === "1") {
+      const target = await ask("GitHub repo (owner/repo or URL) or local folder", ".");
+      rl.close();
+      const slug = slugifyTitle(
+        target.replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "").replace(/\/$/, "") + "-reel",
+      );
+      const outDir = join(TEMPLATE_DIR, "public/features", slug);
+      runSync("node", [join(TEMPLATE_DIR, "scripts/repo-brief.ts"), target, "--out", outDir], { cwd: process.cwd() });
+      await runCreative(outDir, { audio, format, captions });
+      console.log(`\nRepository reel ready: ${join(outDir, "creative/out/video.mp4")}`);
+      return;
+    }
+
+    const url = await ask("Live app URL", "http://localhost:3000");
+    const title = await ask("Feature title", "New feature");
+    const brief = await ask("What does this feature do? (1-2 sentences)");
+    const routes = await ask("Specific route(s) to film (optional, e.g. /settings)", "");
+    rl.close();
+    if (!brief) {
+      console.error("A short description is required.");
+      process.exit(1);
+    }
+    const outDir = join(TEMPLATE_DIR, "public/features", slugifyTitle(title));
+    const briefArgs = [join(TEMPLATE_DIR, "scripts/brief.ts"), "--out", outDir, "--url", url, "--title", title, "--brief", brief];
+    if (routes) briefArgs.push("--routes", routes);
+    runSync("node", briefArgs, { cwd: process.cwd() });
+    runSync("node", [join(TEMPLATE_DIR, "scripts/capture.ts"), outDir]);
+    await runCreative(outDir, { audio, format, captions });
+    console.log(`\nPreview video ready: ${join(outDir, "creative/out/video.mp4")}`);
+  } finally {
+    rl.close();
+  }
+}
+
+function printSetupGitHubNextSteps(res: { configPath: string; workflowPath: string; secretsUrl: string | null }) {
+  console.log(`\n✓ Created ${res.configPath}`);
+  console.log(`✓ Created ${res.workflowPath}`);
+  console.log("\nNext steps (2 minutes):");
+  console.log("  1. Run `claude setup-token` once and copy your token.");
+  if (res.secretsUrl) {
+    console.log(`  2. Open ${res.secretsUrl}`);
+  } else {
+    console.log("  2. Open your repo on GitHub → Settings → Secrets and variables → Actions");
+  }
+  console.log("     and add secret `CLAUDE_CODE_OAUTH_TOKEN` (optional: `ELEVENLABS_API_KEY` for voice-over & music).");
+  console.log("  3. Commit and push these two files, then comment `/gitcut` on any Pull Request!");
+}
+
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
-  if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
+  if (!cmd) {
+    if (process.stdin.isTTY && process.stdout.isTTY) {
+      await runWizard();
+      return;
+    }
     console.log(CLI_HELP);
+    return;
+  }
+  if (cmd === "wizard") {
+    await runWizard();
+    return;
+  }
+  if (cmd === "help" || cmd === "--help" || cmd === "-h") {
+    console.log(CLI_HELP);
+    return;
+  }
+
+  if (cmd === "doctor") {
+    const { values } = parseArgs({
+      args: rest,
+      options: { "skip-auth": { type: "boolean", default: false } },
+    });
+    const report = formatDoctorReport(runDoctorChecks({ skipAuth: values["skip-auth"] }));
+    console.log(report.text);
+    if (!report.passed) process.exit(1);
+    return;
+  }
+
+  if (cmd === "setup-github") {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        dir: { type: "string" },
+        url: { type: "string" },
+        "auto-preview": { type: "boolean", default: false },
+        name: { type: "string" },
+        website: { type: "string" },
+        accent: { type: "string" },
+        login: { type: "boolean", default: false },
+        "pipeline-repo": { type: "string" },
+        force: { type: "boolean", default: false },
+      },
+    });
+    try {
+      const res = runSetupGitHub({
+        dir: values.dir,
+        url: values.url,
+        autoPreview: values["auto-preview"],
+        name: values.name,
+        website: values.website,
+        accent: values.accent,
+        withLogin: values.login,
+        pipelineRepo: values["pipeline-repo"],
+        force: values.force,
+      });
+      printSetupGitHubNextSteps(res);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
     return;
   }
 
@@ -217,6 +422,7 @@ async function main() {
       args: rest,
       options: {
         url: { type: "string" },
+        "auto-preview": { type: "boolean", default: false },
         name: { type: "string" },
         website: { type: "string" },
         accent: { type: "string" },
@@ -232,6 +438,7 @@ async function main() {
     }
     const cfg = buildInitialConfig({
       url: values.url,
+      autoPreview: values["auto-preview"],
       name: values.name,
       website: values.website,
       accent: values.accent,
