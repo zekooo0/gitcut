@@ -70,7 +70,6 @@ FMT_WIDTH=$(jq -r .width <<<"$SITE_META")
 FMT_HEIGHT=$(jq -r .height <<<"$SITE_META")
 FMT_GUIDANCE=$(jq -r .formatGuidance <<<"$SITE_META")
 CAPTIONS_ON=$(jq -r .captions <<<"$SITE_META")
-echo "mode: $([ "$REPO_MODE" = "1" ] && echo repo-reel || echo ui-film), format: $FMT_NAME (${FMT_WIDTH}x${FMT_HEIGHT}), captions: $CAPTIONS_ON"
 
 # Resolve audio mode: auto uses ElevenLabs if the local proxy is up, otherwise silent/captioned mode.
 ELEVEN_ENDPOINT="${ELEVEN_URL:-http://127.0.0.1:8790}"
@@ -80,7 +79,6 @@ if [ "$AUDIO_MODE" = "auto" ]; then
     AUDIO_MODE="elevenlabs"
   else
     AUDIO_MODE="silent"
-    echo "ElevenLabs proxy not running: continuing in silent/captioned mode."
   fi
 elif [ "$AUDIO_MODE" = "elevenlabs" ]; then
   curl -sf "$ELEVEN_ENDPOINT/usage" >/dev/null || { echo "::error::ElevenLabs proxy is not running."; exit 1; }
@@ -88,7 +86,16 @@ elif [ "$AUDIO_MODE" != "silent" ]; then
   echo "::error::Unknown AUDIO_MODE=$AUDIO_MODE (expected auto, elevenlabs, or silent)."
   exit 1
 fi
-echo "audio mode: $AUDIO_MODE"
+
+MODE_LABEL=$([ "$REPO_MODE" = "1" ] && echo "Repo Reel" || echo "Feature Video")
+[ -n "${EDIT_REQUEST:-}" ] && MODE_LABEL="$MODE_LABEL (Edit)"
+echo ""
+echo "🎬 GitCut · $MODE_LABEL"
+echo "   Canvas   $FMT_NAME (${FMT_WIDTH}x${FMT_HEIGHT}) · captions $([ "$CAPTIONS_ON" = "true" ] && echo on || echo off)"
+echo "   Audio    $([ "$AUDIO_MODE" = "elevenlabs" ] && echo "ElevenLabs (voice-over, music & SFX)" || echo "silent / captioned mode")"
+echo "   Model    ${CREATIVE_MODEL:-sonnet}"
+echo "   Output   $D"
+echo ""
 
 if [ -n "${EDIT_REQUEST:-}" ]; then
   # Edit: keep the film; rebuild only the inputs next to it.
@@ -112,7 +119,7 @@ if [ -z "${EDIT_REQUEST:-}" ]; then
       .replace(/height=\{1080\}/, `height={${process.env.FMT_HEIGHT}}`);
     fs.writeFileSync(p, src);
   ' "$C/film/src/Root.tsx"
-  T0=$(date +%s); ( cd "$C/film" && npm ci --no-audit --no-fund >/dev/null ); echo "starter npm ci: $(( $(date +%s) - T0 )) s"
+  T0=$(date +%s); ( cd "$C/film" && npm ci --no-audit --no-fund --loglevel=error >/dev/null ); echo "  ✓ Setup       Remotion starter ready ($(( $(date +%s) - T0 )) s)"
 fi
 
 cp "$D/BRIEF.md" "$C/input/facts.md"                 # the planner's facts; no storyline
@@ -279,16 +286,15 @@ if ! timeout 120 claude -p "Reply with the word ok." --model haiku > "$RUNNER_TE
   echo "::error::Claude sign-in failed. Re-create the token with 'claude setup-token' and set ONLY the sk-ant-oat01-... line as CLAUDE_CODE_OAUTH_TOKEN."
   tail -5 "$RUNNER_TEMP/auth.txt"; exit 1
 fi
-# Each log line gets a wall-clock stamp ("<epoch>\t<json>"): the summary below splits the time
-# into model thinking, renders, stills, installs and ElevenLabs calls.
-TA=$(date +%s)
+echo "  ✓ Preflight   Claude Code signed in"
+echo ""
+echo "  ▶ Directing & rendering film…"
+# Stream live progress to the terminal while recording timed JSONL to agent.log for CI.
 timeout "${CREATIVE_TIMEOUT:-40m}" claude -p "$TASK" \
   --model "${CREATIVE_MODEL:-sonnet}" --dangerously-skip-permissions --add-dir "$SKILL" \
   --output-format stream-json --verbose 2>&1 \
-  | python3 -u -c 'import sys,time
-for l in sys.stdin: sys.stdout.write(f"{time.time():.1f}\t{l}"); sys.stdout.flush()' > "$RUNNER_TEMP/agent.log" || {
+  | node "$SCRIPTS_DIR/stream-progress.$SCRIPT_EXT" "$RUNNER_TEMP/agent.log" || {
   echo "creative agent failed (exit $?); last lines:"; tail -c 3000 "$RUNNER_TEMP/agent.log"; exit 1; }
-echo "agent wall time: $(( $(date +%s) - TA )) s"
 
 # The contract CI relies on.
 test -s out/video.mp4 || { echo "no out/video.mp4"; exit 1; }
@@ -327,14 +333,18 @@ node "$SCRIPTS_DIR/subtitles.$SCRIPT_EXT" "$(pwd)/.." || true
 # (Remotion's bundled build lacks these filters); the preview MP4 is the real output.
 DUR=$(run_ffprobe -v error -show_entries format=duration -of csv=p=0 out/video.mp4)
 if command -v ffmpeg >/dev/null; then
-  ffmpeg -v error -y -i out/video.mp4 -vf "fps=12/$DUR,scale=640:-1,tile=4x3:padding=6:color=0x111111" \
-    -frames:v 1 sheet.png || echo "::warning::contact sheet failed"
+  if ffmpeg -v error -y -i out/video.mp4 -vf "fps=12/$DUR,scale=640:-1,tile=4x3:padding=6:color=0x111111" \
+    -frames:v 1 sheet.png; then
+    echo "  ✓ Sheet       Contact sheet → sheet.png"
+  else
+    echo "::warning::contact sheet failed"
+  fi
 else
   echo "::warning::no system ffmpeg: no contact sheet"
 fi
-python3 - "$RUNNER_TEMP/agent.log" <<'EOF' || true
+if [ -n "${CI:-}" ]; then
+  python3 - "$RUNNER_TEMP/agent.log" <<'EOF' || true
 import json, sys, re
-# result events: turns and time are per event (sum them); the cost is cumulative (take the last)
 turns = ms = 0; cost = 0.0; first = last = None
 start = {}; spent = {}; count = {}
 def kind(name, inp):
@@ -342,7 +352,7 @@ def kind(name, inp):
     c = inp.get("command", "")
     if re.search(r"npm run render|remotion render", c): return "full render"
     if "remotion still" in c or "npm run still" in c: return "stills"
-    if "eleven.ts" in c: return "elevenlabs"
+    if "eleven.ts" in c or "eleven.js" in c: return "elevenlabs"
     if re.search(r"npm (ci|install|i )", c): return "npm install"
     if "ffmpeg" in c or "ffprobe" in c: return "ffmpeg checks"
     return "other shell"
@@ -370,4 +380,9 @@ if first:
         print(f"  {k:16} {round(s/60,1):5} min  x{count[k]}")
     print(f"  {'model (thinking)':16} {round((total-tools)/60,1):5} min")
 EOF
-echo "creative film ok: $(printf '%.1f' "$DUR") s"
+fi
+echo ""
+echo "🎉 Done! ($(printf '%.1f' "$DUR") s)"
+echo "   Video:      $(pwd)/out/video.mp4"
+[ -f "$(pwd)/sheet.png" ] && echo "   Contact:    $(pwd)/sheet.png"
+[ -f "$(pwd)/out/captions.srt" ] && echo "   Subtitles:  $(pwd)/out/captions.srt"
