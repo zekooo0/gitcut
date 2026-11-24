@@ -21,7 +21,7 @@
  *      GITHUB_TOKEN (falls back to `gh auth token`, PR mode only), CLICKUP_TOKEN (optional),
  *      CAPTURE_STORAGE_STATE or login env vars from the site config (discovery signs in).
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,11 +91,11 @@ async function main() {
     .filter(Boolean)
     .join("\n\n");
 
-  if (!args.pr && !standaloneBriefText) {
+  if (!args.pr && !standaloneBriefText && !args.url && !args.site && !existsSync(join(process.cwd(), ".gitcut.json"))) {
     console.error(
       "usage:\n" +
         "  node scripts/brief.ts --pr owner/repo#123 [--url <baseUrl>] [--site <name|path>] [--routes /a,/b]\n" +
-        "  node scripts/brief.ts --url <baseUrl> --title <title> --brief <text> [--brief-file <md>] [--site <name|path>] [--routes /a,/b]",
+        "  node scripts/brief.ts --url <baseUrl> [--title <title>] [--brief <text>] [--brief-file <md>] [--site <name|path>] [--routes /a,/b]",
     );
     process.exit(2);
   }
@@ -301,8 +301,11 @@ async function main() {
       if (!r.ok) throw new Error(`OpenAI: ${r.status} ${await r.text()}`);
       return (await r.json()).choices[0].message.content;
     }
-    if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-      // A Claude subscription token works only through the Claude Code CLI, not the HTTP API.
+    const hasClaudeCli =
+      Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) ||
+      spawnSync("which", ["claude"], { encoding: "utf8" }).status === 0;
+    if (hasClaudeCli) {
+      // Uses either CLAUDE_CODE_OAUTH_TOKEN (CI) or the locally signed-in Claude Code CLI.
       // One turn, no tools: a plain completion. The user prompt goes on stdin (it is large).
       const env = { ...process.env };
       delete env.ANTHROPIC_API_KEY;
@@ -317,7 +320,7 @@ async function main() {
       return j.result as string;
     }
     throw new Error(
-      "no LLM key: set ANTHROPIC_API_KEY, OPENAI_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (or use --prompt-only / --response)",
+      "no LLM available: sign in with `claude` CLI, or set ANTHROPIC_API_KEY, OPENAI_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN",
     );
   };
 
@@ -331,7 +334,18 @@ async function main() {
 
   /* ---------------- resolve source & site ---------------- */
   const pr = args.pr ? await getPR(args.pr) : null;
-  const standaloneTitle = args.title?.trim() || standaloneBriefText.split("\n")[0].replace(/^#\s*/, "").slice(0, 80) || "New Feature";
+  const urlHost = (() => {
+    try {
+      return args.url ? new URL(args.url).hostname : "";
+    } catch {
+      return "";
+    }
+  })();
+  const standaloneTitle =
+    args.title?.trim() ||
+    standaloneBriefText.split("\n")[0]?.replace(/^#\s*/, "").slice(0, 80) ||
+    urlHost ||
+    "Product Showcase";
   const slugGuess = args.slug ?? (pr ? slugFor(pr.repo, pr.branch) : slugifyTitle(standaloneTitle));
   const outDir = args.out ?? join(ROOT, "public/features", slugGuess);
   mkdirSync(join(outDir, "prompts"), { recursive: true });
@@ -435,6 +449,10 @@ async function main() {
     ? `\n\n## Site-specific safety rules\n${site.safetyRules.map((r) => `- ${r}`).join("\n")}`
     : "";
 
+  const effectiveBrief =
+    standaloneBriefText ||
+    `Create a product walkthrough showcasing the main value proposition, key UI sections, and interactive features visible on ${site.baseUrl}.`;
+
   const sourceBlock = pr
     ? `# Pull request ${pr.repo}#${pr.number}: ${pr.title}
 ${pr.url}
@@ -448,12 +466,12 @@ ${task ? `\n# ClickUp task ${task.id}: ${task.name}\n${task.description}\n` : ""
     : `# Feature brief: ${standaloneTitle}
 URL: ${site.baseUrl}
 
-${standaloneBriefText}
+${effectiveBrief}
 ${task ? `\n# ClickUp task ${task.id}: ${task.name}\n${task.description}\n` : ""}`;
 
   // Save standalone context so creative.sh does not need GitHub / gh pr view.
   if (!pr) {
-    writeFileSync(join(outDir, "context.md"), `# ${standaloneTitle}\n\n${standaloneBriefText}\n`);
+    writeFileSync(join(outDir, "context.md"), `# ${standaloneTitle}\n\n${effectiveBrief}\n`);
   }
 
   const SYSTEM =

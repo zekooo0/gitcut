@@ -233,6 +233,7 @@ function resolveFeatureDir(args: {
   out?: string;
   slug?: string;
   pr?: string;
+  url?: string;
   title?: string;
   brief?: string;
 }): string {
@@ -242,7 +243,14 @@ function resolveFeatureDir(args: {
     const safe = args.pr.replace(/[^a-z0-9]+/gi, "-").toLowerCase().replace(/^-|-$/g, "");
     return defaultOutputDir(safe);
   }
-  const title = args.title?.trim() || args.brief?.trim().split("\n")[0] || "gitcut-video";
+  const urlHost = (() => {
+    try {
+      return args.url ? new URL(args.url).hostname : "";
+    } catch {
+      return "";
+    }
+  })();
+  const title = args.title?.trim() || args.brief?.trim().split("\n")[0] || urlHost || "gitcut-video";
   return defaultOutputDir(slugifyTitle(title));
 }
 
@@ -404,22 +412,29 @@ async function runWizard() {
       defaultValue: "http://localhost:3000",
       validate: (v) => (/^https?:\/\//i.test(v) ? null : "Enter a valid http:// or https:// URL."),
     });
-    const title = await textPrompt("Feature title", {
-      placeholder: "e.g. Dark mode toggle",
-      validate: (v) => (v ? null : "Enter a short title for the feature."),
+    const hostFallback = (() => {
+      try {
+        return new URL(url).hostname;
+      } catch {
+        return "Product Showcase";
+      }
+    })();
+    const title = await textPrompt("Feature or product title (optional)", {
+      defaultValue: hostFallback,
     });
-    const brief = await textPrompt("What does this feature do? (1–2 sentences)", {
-      validate: (v) => (v.length >= 5 ? null : "Describe the feature in a few words."),
+    const brief = await textPrompt("What should the video highlight? (optional — press Enter to auto-explore the site)", {
+      placeholder: "e.g. Dark mode toggle in Settings",
     });
     const routes = await textPrompt("Specific route(s) to film (optional)", {
       placeholder: "e.g. /settings,/billing — leave blank for AI auto-discovery",
     });
-    const outDir = defaultOutputDir(slugifyTitle(title));
+    const outDir = defaultOutputDir(slugifyTitle(title || hostFallback));
     console.log(
       renderSummaryBox([
         ["Mode", "Live App Feature Video"],
         ["URL", url],
-        ["Title", title],
+        ["Title", title || hostFallback],
+        ["Brief", brief || "Auto-explore live site"],
         ["Routes", routes || "AI auto-discovery"],
         ["Format", format],
         ["Captions", captions ? "burned-in + .srt/.vtt" : ".srt/.vtt only"],
@@ -428,7 +443,9 @@ async function runWizard() {
       ]),
     );
     if (!(await confirmPrompt("Capture & generate this video now?", true))) return;
-    const briefArgs = [scriptPath("brief"), "--out", outDir, "--url", url, "--title", title, "--brief", brief];
+    const briefArgs = [scriptPath("brief"), "--out", outDir, "--url", url];
+    if (title) briefArgs.push("--title", title);
+    if (brief) briefArgs.push("--brief", brief);
     if (routes) briefArgs.push("--routes", routes);
     runSync("node", briefArgs, { cwd: process.cwd() });
     runSync("node", [scriptPath("capture"), outDir]);
