@@ -11,7 +11,7 @@
   },
   "scripts": {
     "start": "probot run ./index.js",
-    "test": "node --test test/"
+    "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
     "probot": "^14.3.7"
