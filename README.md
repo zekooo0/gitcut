@@ -1,5 +1,9 @@
 # GitCut
 
+[![npm version](https://img.shields.io/npm/v/gitcut-cli.svg)](https://www.npmjs.com/package/gitcut-cli)
+[![CI](https://github.com/zekooo0/gitcut/actions/workflows/ci.yml/badge.svg)](https://github.com/zekooo0/gitcut/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 An open-source pipeline that turns **pull requests**, **live URLs**, or **any GitHub repository README**
 into short, AI-directed Remotion videos.
 
@@ -197,6 +201,10 @@ creative/                      Agent briefs (BRIEF.md, EDIT.md), SHOTS.md, start
 app/                           Optional Probot GitHub App for multi-repo routing
 runner/                        Optional ephemeral Docker self-hosted runner
 ```
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, architecture notes, and good first issues, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards, and [SECURITY.md](SECURITY.md) for security boundaries and reporting.
 
 ## Costs, safety & licensing
 

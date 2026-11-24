@@ -38,4 +38,5 @@ jobs:
           cache-dependency-path: template/package-lock.json
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
+      - run: npm run build
       - run: npm test

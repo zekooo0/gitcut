@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a bug or unexpected behavior in GitCut
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a bug!
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which mode were you using?
+      options:
+        - Local CLI (gitcut repo)
+        - Local CLI (gitcut create / live UI)
+        - Reusable GitHub Actions workflow (pipeline.yml)
+        - GitHub Actions Repo Reel workflow (repo-reel.yml)
+        - Self-hosted Probot App / Docker runner
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Command / steps to reproduce
+      placeholder: npx gitcut-cli repo owner/repo --format vertical
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or `gitcut doctor` output
+      render: shell

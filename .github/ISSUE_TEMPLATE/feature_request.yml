@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest a new integration, video mode, or improvement for GitCut
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the workflow or use case you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you expect this to work (CLI flag, config option, workflow input, etc.)?
+    validations:
+      required: true
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be interested in submitting a PR for this feature
