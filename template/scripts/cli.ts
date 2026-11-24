@@ -20,14 +20,14 @@
  *   gitcut help
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { slugifyTitle } from "./brief.ts";
 import { detectGitHubRepo, formatDoctorReport, runDoctorChecks } from "./lib/doctor.ts";
+import { confirmPrompt, renderBanner, renderSummaryBox, selectPrompt, textPrompt } from "./lib/prompts.ts";
 import { slugFor } from "./slug.ts";
 
 const TEMPLATE_DIR = new URL("..", import.meta.url).pathname;
@@ -273,78 +273,169 @@ async function runCreative(
   }
 }
 
-async function runWizard() {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const ask = async (q: string, fallback = "") => {
-    const suffix = fallback ? ` [${fallback}]` : "";
-    const ans = (await rl.question(`${q}${suffix}: `)).trim();
-    return ans || fallback;
-  };
+function readCliVersion(): string {
   try {
-    console.log("\n🎬 Welcome to GitCut — what would you like to do?\n");
-    console.log("  1) Make a 15-30s Repo Reel from a GitHub repo or local folder (easiest, no browser needed)");
-    console.log("  2) Make a feature video from a live website / local dev server");
-    console.log("  3) Set up GitHub Actions (/gitcut PR videos) in this repository");
-    console.log("  4) Check my local setup (doctor)\n");
-    const choice = await ask("Choose 1-4", "1");
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")) as { version?: string };
+    return pkg.version ?? "0.1.0";
+  } catch {
+    return "0.1.0";
+  }
+}
 
-    if (choice === "4") {
-      rl.close();
+function listExistingFilms(cwd: string): string[] {
+  const base = join(cwd, ".gitcut");
+  if (!existsSync(base)) return [];
+  return readdirSync(base)
+    .map((name) => join(base, name))
+    .filter((dir) => existsSync(join(dir, "creative", "film", "package.json")));
+}
+
+async function runWizard() {
+  console.log(renderBanner(readCliVersion()));
+  const existingFilms = listExistingFilms(process.cwd());
+
+  const menuOptions = [
+    { value: "repo", label: "Repo / README Reel", hint: "15–30 s showcase from any GitHub repo (no browser)" },
+    { value: "live", label: "Live App Feature Video", hint: "Playwright captures your real UI from a URL" },
+    ...(existingFilms.length
+      ? [{ value: "edit", label: "Edit an existing video", hint: `Modify one of ${existingFilms.length} film(s) in ./.gitcut/` }]
+      : []),
+    { value: "setup-github", label: "Set up GitHub Actions", hint: "Add .gitcut.json + /gitcut PR workflow to this repo" },
+    { value: "doctor", label: "Check my setup (doctor)", hint: "Verify Node, Claude Code, jq, ffmpeg, and audio" },
+  ];
+
+  let choice: string;
+  try {
+    choice = await selectPrompt("What would you like to do?", menuOptions);
+  } catch {
+    return;
+  }
+
+  try {
+    if (choice === "doctor") {
       const report = formatDoctorReport(runDoctorChecks());
       console.log("\n" + report.text);
       if (!report.passed) process.exit(1);
       return;
     }
 
-    if (choice === "3") {
-      const name = await ask("Product name", "My App");
-      const previewAns = (await ask("Use automatic Vercel/Netlify/Cloudflare PR preview URLs? (y/n)", "y")).toLowerCase();
-      const autoPreview = previewAns.startsWith("y");
-      const url = autoPreview ? "" : await ask("Staging URL", "https://staging.example.com");
-      const loginAns = (await ask("Does your app require email/password login? (y/n)", "n")).toLowerCase();
-      rl.close();
-      const res = runSetupGitHub({ name, autoPreview, url: url || undefined, withLogin: loginAns.startsWith("y") });
+    if (choice === "setup-github") {
+      const ghRepo = detectGitHubRepo(process.cwd());
+      const name = await textPrompt("Product name", { defaultValue: ghRepo?.repo ?? "My App" });
+      const autoPreview = await confirmPrompt("Use automatic Vercel / Netlify / Cloudflare PR preview URLs?", true);
+      const url = autoPreview
+        ? undefined
+        : await textPrompt("Staging app URL", {
+            defaultValue: "https://staging.example.com",
+            validate: (v) => (/^https?:\/\//i.test(v) ? null : "Enter a valid http:// or https:// URL."),
+          });
+      const withLogin = await confirmPrompt("Does your app require email/password login?", false);
+      const res = runSetupGitHub({ name, autoPreview, url, withLogin });
       printSetupGitHubNextSteps(res);
       return;
     }
 
-    const fmtChoice = await ask("Video format: 1) vertical 9:16  2) square 1:1  3) landscape 16:9", choice === "1" ? "1" : "3");
-    const format = fmtChoice === "1" ? "vertical" : fmtChoice === "2" ? "square" : "landscape";
-    const capAns = (await ask("Burn synced captions into the video? (y/n)", "y")).toLowerCase();
-    const captions = capAns.startsWith("y");
-    const audio = process.env.ELEVENLABS_API_KEY ? "auto" : "silent";
+    if (choice === "edit") {
+      const filmDir = await selectPrompt(
+        "Which video would you like to edit?",
+        existingFilms.map((d) => ({ value: d, label: d.split("/").pop()!, hint: d })),
+      );
+      const request = await textPrompt("Describe what to change (in plain English)", {
+        placeholder: "e.g. shorter intro, brighter accent, slower terminal",
+        validate: (v) => (v.length >= 3 ? null : "Please describe what you'd like to change."),
+      });
+      const audio = process.env.ELEVENLABS_API_KEY
+        ? await selectPrompt("Audio mode", [
+            { value: "elevenlabs", label: "ElevenLabs", hint: "Regenerate voice/music if timing changes" },
+            { value: "silent", label: "Keep silent / no new audio", hint: "Free, visual edits only" },
+          ])
+        : "silent";
+      console.log(renderSummaryBox([["Film", filmDir], ["Edit", request], ["Audio", audio]]));
+      if (!(await confirmPrompt("Start editing now?", true))) return;
+      await runCreative(filmDir, { audio, editRequest: request });
+      return;
+    }
 
-    if (choice === "1") {
-      const target = await ask("GitHub repo (owner/repo or URL) or local folder", ".");
-      rl.close();
+    const format = await selectPrompt(
+      "Choose video format",
+      [
+        { value: "vertical", label: "Vertical (9:16)", hint: "1080×1920 — Shorts, Reels, TikTok, README" },
+        { value: "square", label: "Square (1:1)", hint: "1080×1080 — LinkedIn, X / Twitter" },
+        { value: "landscape", label: "Landscape (16:9)", hint: "1920×1080 — YouTube, Docs, GitHub PRs" },
+      ],
+      choice === "repo" ? 0 : 2,
+    );
+    const captions = await confirmPrompt("Burn synced captions into the video?", true);
+    const audio = process.env.ELEVENLABS_API_KEY
+      ? await selectPrompt("Audio mode", [
+          { value: "elevenlabs", label: "ElevenLabs voice-over + music + SFX", hint: "ELEVENLABS_API_KEY detected" },
+          { value: "silent", label: "Silent / captioned mode", hint: "Free — great for muted autoplay" },
+        ])
+      : "silent";
+
+    if (choice === "repo") {
+      const ghRepo = detectGitHubRepo(process.cwd());
+      const defaultTarget = ghRepo ? `${ghRepo.owner}/${ghRepo.repo}` : ".";
+      const target = await textPrompt("GitHub repo (owner/repo, URL) or local folder", {
+        defaultValue: defaultTarget,
+        validate: (v) => (v ? null : "Enter a GitHub repo (owner/repo) or folder path."),
+      });
       const slug = slugifyTitle(
         target.replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "").replace(/\/$/, "") + "-reel",
       );
       const outDir = defaultOutputDir(slug);
+      console.log(
+        renderSummaryBox([
+          ["Mode", "Repo / README Reel"],
+          ["Repository", target],
+          ["Format", format],
+          ["Captions", captions ? "burned-in + .srt/.vtt" : ".srt/.vtt only"],
+          ["Audio", audio === "elevenlabs" ? "ElevenLabs (voice + music + SFX)" : "Silent / captioned"],
+          ["Output", outDir],
+        ]),
+      );
+      if (!(await confirmPrompt("Generate this reel now?", true))) return;
       runSync("node", [scriptPath("repo-brief"), target, "--out", outDir], { cwd: process.cwd() });
       await runCreative(outDir, { audio, format, captions });
-      console.log(`\nRepository reel ready: ${join(outDir, "creative/out/video.mp4")}`);
       return;
     }
 
-    const url = await ask("Live app URL", "http://localhost:3000");
-    const title = await ask("Feature title", "New feature");
-    const brief = await ask("What does this feature do? (1-2 sentences)");
-    const routes = await ask("Specific route(s) to film (optional, e.g. /settings)", "");
-    rl.close();
-    if (!brief) {
-      console.error("A short description is required.");
-      process.exit(1);
-    }
+    const url = await textPrompt("Live app URL", {
+      defaultValue: "http://localhost:3000",
+      validate: (v) => (/^https?:\/\//i.test(v) ? null : "Enter a valid http:// or https:// URL."),
+    });
+    const title = await textPrompt("Feature title", {
+      placeholder: "e.g. Dark mode toggle",
+      validate: (v) => (v ? null : "Enter a short title for the feature."),
+    });
+    const brief = await textPrompt("What does this feature do? (1–2 sentences)", {
+      validate: (v) => (v.length >= 5 ? null : "Describe the feature in a few words."),
+    });
+    const routes = await textPrompt("Specific route(s) to film (optional)", {
+      placeholder: "e.g. /settings,/billing — leave blank for AI auto-discovery",
+    });
     const outDir = defaultOutputDir(slugifyTitle(title));
+    console.log(
+      renderSummaryBox([
+        ["Mode", "Live App Feature Video"],
+        ["URL", url],
+        ["Title", title],
+        ["Routes", routes || "AI auto-discovery"],
+        ["Format", format],
+        ["Captions", captions ? "burned-in + .srt/.vtt" : ".srt/.vtt only"],
+        ["Audio", audio === "elevenlabs" ? "ElevenLabs (voice + music + SFX)" : "Silent / captioned"],
+        ["Output", outDir],
+      ]),
+    );
+    if (!(await confirmPrompt("Capture & generate this video now?", true))) return;
     const briefArgs = [scriptPath("brief"), "--out", outDir, "--url", url, "--title", title, "--brief", brief];
     if (routes) briefArgs.push("--routes", routes);
     runSync("node", briefArgs, { cwd: process.cwd() });
     runSync("node", [scriptPath("capture"), outDir]);
     await runCreative(outDir, { audio, format, captions });
-    console.log(`\nPreview video ready: ${join(outDir, "creative/out/video.mp4")}`);
-  } finally {
-    rl.close();
+  } catch (err) {
+    if ((err as Error).message === "CANCELLED") return;
+    throw err;
   }
 }
 

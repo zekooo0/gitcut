@@ -1,6 +1,6 @@
 {
   "name": "gitcut-cli",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Turn pull requests, live web apps, or GitHub READMEs into AI-directed Remotion feature videos",
   "license": "Apache-2.0",
   "type": "module",
