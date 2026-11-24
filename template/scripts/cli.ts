@@ -20,7 +20,7 @@
  *   gitcut help
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createInterface } from "node:readline/promises";
@@ -251,12 +251,14 @@ async function runCreative(
   opts: { pr?: string; audio: string; format?: string; captions?: boolean; editRequest?: string },
 ) {
   const absDir = resolve(dir);
+  const runTemp = process.env.RUNNER_TEMP || mkdtempSync(join(tmpdir(), "gitcut-run-"));
+  const ownTemp = !process.env.RUNNER_TEMP;
   const { mode, stop } = await startElevenProxyIfNeeded(opts.audio);
   try {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       AUDIO_MODE: mode,
-      RUNNER_TEMP: process.env.RUNNER_TEMP || tmpdir(),
+      RUNNER_TEMP: runTemp,
     };
     delete env.ELEVENLABS_API_KEY;
     if (opts.format) env.VIDEO_FORMAT = opts.format;
@@ -267,6 +269,7 @@ async function runCreative(
     runSync("bash", args, { cwd: TEMPLATE_DIR, env });
   } finally {
     stop();
+    if (ownTemp) rmSync(runTemp, { recursive: true, force: true });
   }
 }
 
@@ -489,7 +492,6 @@ async function main() {
       format: values.format,
       captions: values.captions || undefined,
     });
-    console.log(`\nRepository reel ready: ${join(outDir, "creative/out/video.mp4")}`);
     return;
   }
 

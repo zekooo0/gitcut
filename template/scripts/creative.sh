@@ -319,15 +319,18 @@ if [ "$AUDIO_MODE" = "elevenlabs" ]; then
   run_ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 out/video.mp4 \
     | grep -q audio || { echo "out/video.mp4 has no audio track"; exit 1; }
   USAGE=$(curl -sf "$ELEVEN_ENDPOINT/usage" || echo '{}')
-  echo "elevenlabs: $USAGE"
   if [ -z "${EDIT_REQUEST:-}" ]; then
     jq -e '.used.ttsCalls > 0 and .used.musicCalls > 0' <<<"$USAGE" >/dev/null \
       || { echo "no ElevenLabs voice-over or music was made"; exit 1; }
   fi
+  echo "  ✓ Audio       $(jq -r '"\(.used.ttsCalls) voice lines (\(.used.ttsChars) chars) · \(.used.musicCalls) music (\(.used.musicSeconds) s) · \(.used.sfxCalls) SFX"' <<<"$USAGE")"
 fi
 rm -rf input                        # rebuilt from the captures on every run; never committed
 # Export .srt and .vtt subtitle tracks if the agent wrote captions.json.
-node "$SCRIPTS_DIR/subtitles.$SCRIPT_EXT" "$(pwd)/.." || true
+SUB_MSG=$(node "$SCRIPTS_DIR/subtitles.$SCRIPT_EXT" "$(pwd)/.." 2>&1 || true)
+if [ -f out/captions.srt ]; then
+  echo "  ✓ Subtitles   ${SUB_MSG#Exported }"
+fi
 
 # 12 stills (one every ~3 s) as the contact sheet. Optional: needs a full system ffmpeg
 # (Remotion's bundled build lacks these filters); the preview MP4 is the real output.

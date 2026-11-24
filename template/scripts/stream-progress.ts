@@ -43,16 +43,21 @@ function extractMp3(cmd: string): string {
 export function describeToolUse(name: string, input: Record<string, unknown> = {}): ProgressEvent {
   if (name === "Bash") {
     const cmd = String(input.command ?? "").trim();
-    if (/eleven\.(ts|js)\s+tts\b/.test(cmd)) {
-      const f = extractMp3(cmd);
-      return { icon: "🎙️ ", label: f ? `Generating voice-over (${f})` : "Generating voice-over" };
-    }
-    if (/eleven\.(ts|js)\s+music\b/.test(cmd)) {
-      return { icon: "🎵", label: "Composing background music" };
-    }
-    if (/eleven\.(ts|js)\s+sfx\b/.test(cmd)) {
-      const f = extractMp3(cmd);
-      return { icon: "🔊", label: f ? `Generating sound effect (${f})` : "Generating sound effect" };
+    if (/eleven\.(ts|js)\b/.test(cmd)) {
+      const hasTts = /\btts\b/.test(cmd);
+      const hasMusic = /\bmusic\b/.test(cmd);
+      const hasSfx = /\bsfx\b/.test(cmd);
+      if (hasTts && hasMusic) return { icon: "🎙️ ", label: "Generating voice-over & background music" };
+      if (hasTts) {
+        const f = extractMp3(cmd);
+        return { icon: "🎙️ ", label: f ? `Generating voice-over (${f})` : "Generating voice-over" };
+      }
+      if (hasMusic) return { icon: "🎵", label: "Composing background music" };
+      if (hasSfx) {
+        const f = extractMp3(cmd);
+        return { icon: "🔊", label: f ? `Generating sound effect (${f})` : "Generating sound effects" };
+      }
+      return { icon: "🎙️ ", label: "Generating audio with ElevenLabs" };
     }
     if (/npm run render|remotion render/.test(cmd)) {
       return { icon: "🎞️ ", label: "Rendering final MP4 (this takes ~20–90 s)" };
@@ -63,11 +68,24 @@ export function describeToolUse(name: string, input: Record<string, unknown> = {
     if (/npm (ci|install|i )/.test(cmd)) {
       return { icon: "📦", label: "Installing film dependencies" };
     }
-    if (/ffmpeg|ffprobe/.test(cmd)) {
-      return { icon: "🔍", label: "Inspecting video & audio with ffmpeg", group: "ffmpeg" };
+    if (/shotcraft|SHOTS\.md|shots\.md/.test(cmd)) {
+      return { icon: "🎬", label: "Studying video-shotcraft shot cards", group: "read-skill" };
     }
-    const oneLine = cmd.replace(/\s+/g, " ").slice(0, 64);
-    return { icon: "⚙️ ", label: oneLine ? `Running: ${oneLine}` : "Running command" };
+    if (/(?:cat|tee)\s+>{1,2}\s*[^\n]*(NOTES\.md|CHANGES\.md|captions\.json)/.test(cmd)) {
+      return { icon: "📝", label: "Writing notes & subtitle timings", group: "notes" };
+    }
+    if (/(?:cat|tee)\s+>{1,2}\s*[^\n]*\.(tsx|ts|css|json)/.test(cmd)) {
+      return { icon: "✏️ ", label: "Writing film source files", group: "write-src" };
+    }
+    if (/ffmpeg|ffprobe/.test(cmd)) {
+      return { icon: "🔍", label: "Verifying video & audio levels with ffmpeg", group: "ffmpeg" };
+    }
+    if (/^(?:cd\s+[^;&\n]+[;&]\s*)*(?:ls|cat|head|tail|find|mkdir|cp)\b/.test(cmd)) {
+      return { icon: "📁", label: "Inspecting & preparing workspace", group: "workspace" };
+    }
+    // Strip leading `cd ...;` boilerplate so the label stays readable.
+    const clean = cmd.replace(/^(?:cd\s+[^;&\n]+[;&]+\s*)+/, "").replace(/\s+/g, " ").slice(0, 60);
+    return { icon: "⚙️ ", label: clean ? `Running: ${clean}` : "Running command" };
   }
 
   if (name === "Write" || name === "Edit" || name === "MultiEdit") {
