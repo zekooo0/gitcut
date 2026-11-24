@@ -22,9 +22,9 @@ test("parseCommand: options", () => {
   });
 });
 
-test("parseCommand: site, url, format, style, and captions options", () => {
+test("parseCommand: site, url, format, style, provider, model, and captions options", () => {
   assert.deepEqual(
-    parseCommand("/video plan site=acme-app url=https://pr-42.preview.example.com format=9:16 style=editorial-light captions=on"),
+    parseCommand("/video plan site=acme-app url=https://pr-42.preview.example.com format=9:16 style=editorial-light provider=openrouter model=anthropic/claude-sonnet-4.5 captions=on"),
     {
       kind: "dispatch",
       dispatch: {
@@ -33,6 +33,8 @@ test("parseCommand: site, url, format, style, and captions options", () => {
         url: "https://pr-42.preview.example.com",
         format: "vertical",
         style: "editorial-light",
+        provider: "openrouter",
+        model: "anthropic/claude-sonnet-4.5",
         captions: "on",
       },
     },
@@ -41,17 +43,20 @@ test("parseCommand: site, url, format, style, and captions options", () => {
   assert.equal(parseCommand("/video plan url=javascript:alert(1)").kind, "error");
   assert.equal(parseCommand("/video plan format=4:3").kind, "error");
   assert.equal(parseCommand("/video plan style=rainbow").kind, "error");
+  assert.equal(parseCommand("/video plan provider=bogus").kind, "error");
+  assert.equal(parseCommand("/video plan model=bad;rm").kind, "error");
   assert.equal(parseCommand("/video plan captions=maybe").kind, "error");
   assert.equal(parseCommand("/video approve site=x").kind, "error");
   assert.equal(parseCommand("/video approve url=https://example.com").kind, "error");
   assert.equal(parseCommand("/video approve format=square").kind, "error");
   assert.equal(parseCommand("/video approve style=kinetic-bold").kind, "error");
+  assert.equal(parseCommand("/video approve provider=openai").kind, "error");
   assert.deepEqual(
     workflowInputs(
       { owner: "o", repo: "r", number: 1 },
-      { mode: "plan", site: "s", url: "https://example.com", format: "square", style: "kinetic-bold", captions: "on" },
+      { mode: "plan", site: "s", url: "https://example.com", format: "square", style: "kinetic-bold", provider: "gemini", model: "gemini-2.5-pro", captions: "on" },
     ),
-    { mode: "plan", pr: "o/r#1", site: "s", url: "https://example.com", format: "square", style: "kinetic-bold", captions: "on" },
+    { mode: "plan", pr: "o/r#1", site: "s", url: "https://example.com", format: "square", style: "kinetic-bold", provider: "gemini", model: "gemini-2.5-pro", captions: "on" },
   );
 });
 

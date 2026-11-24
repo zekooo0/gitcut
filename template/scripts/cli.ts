@@ -27,6 +27,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { slugifyTitle } from "./brief.ts";
 import { detectGitHubRepo, formatDoctorReport, runDoctorChecks } from "./lib/doctor.ts";
+import { detectProviders, formatProvidersTable, PROVIDER_CATALOG } from "./lib/providers.ts";
 import { confirmPrompt, renderBanner, renderSummaryBox, selectPrompt, textPrompt } from "./lib/prompts.ts";
 import { slugFor } from "./slug.ts";
 
@@ -40,15 +41,16 @@ export const CLI_HELP = `GitCut CLI
 
 Usage:
   gitcut                   Interactive guided wizard (easiest way to start!)
-  gitcut doctor            Check local prerequisites (Node 24+, Claude Code, jq, ffmpeg, gh)
+  gitcut doctor            Check local prerequisites (Node 24+, AI providers, jq, ffmpeg, gh)
+  gitcut providers         List all supported AI providers (Claude, Codex, Gemini, OpenCode, OpenRouter, Ollama...)
   gitcut setup-github      Add .gitcut.json + .github/workflows/gitcut.yml to your repo
   gitcut init              [--url <url>] [--auto-preview] [--name <product>] [--website <url>] [--accent <#hex>] [--out .gitcut.json] [--force]
-  gitcut repo              <owner/repo | github-url | local-dir> [--format vertical|square|landscape|9:16|1:1|16:9] [--style <preset>] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
-  gitcut create            [--pr owner/repo#123 | --brief <text> | --brief-file <md>] [--url <url>] [--auto-preview] [--title <title>] [--routes /a,/b] [--site <name|path>] [--format landscape|square|vertical|16:9|1:1|9:16] [--style <preset>] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
+  gitcut repo              <owner/repo | github-url | local-dir> [--format vertical|square|landscape] [--style <preset>] [--provider <id>] [--model <name>] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
+  gitcut create            [--pr owner/repo#123 | --brief <text> | --brief-file <md>] [--url <url>] [--auto-preview] [--title <title>] [--routes /a,/b] [--site <name|path>] [--format <preset>] [--style <preset>] [--provider <id>] [--model <name>] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
   gitcut plan              ...same planning options as create (stops after capture.json + BRIEF.md)...
   gitcut capture           <dir>
-  gitcut film              <dir> [--pr owner/repo#123] [--format <preset>] [--style <preset>] [--captions] [--audio auto|elevenlabs|silent]
-  gitcut edit              <dir> <request...> [--pr owner/repo#123] [--audio auto|elevenlabs|silent]
+  gitcut film              <dir> [--pr owner/repo#123] [--format <preset>] [--style <preset>] [--provider <id>] [--model <name>] [--captions] [--audio auto|elevenlabs|silent]
+  gitcut edit              <dir> <request...> [--pr owner/repo#123] [--provider <id>] [--model <name>] [--audio auto|elevenlabs|silent]
   gitcut render            <dir> [--out <file.mp4>]
   gitcut subtitles         <dir>
   gitcut notify            --video <url> [--title <t>] [--youtube <url>] [--captions <url>] [--pr owner/repo#123] [--linear ENG-123]
@@ -76,6 +78,11 @@ Examples:
   # 4. Edit the film in plain English and render the final MP4
   gitcut edit public/features/dark-mode-toggle "shorter intro, brighter highlight"
   gitcut render public/features/dark-mode-toggle --out ./dark-mode.mp4
+
+AI Providers (--provider & --model):
+  CLIs: claude, codex (OpenAI), gemini-cli (Google), opencode (75+ models)
+  APIs: anthropic, openai, gemini, openrouter, deepseek, xai, groq, mistral, ollama, openai-compatible
+  Default is --provider auto (auto-detects installed CLIs & API keys). Run \`gitcut providers\` to inspect.
 
 Visual styles (--style):
   auto (default: matches the live site's real CSS theme, or picks a distinct look per repo),
@@ -261,7 +268,16 @@ function resolveFeatureDir(args: {
 
 async function runCreative(
   dir: string,
-  opts: { pr?: string; audio: string; format?: string; style?: string; captions?: boolean; editRequest?: string },
+  opts: {
+    pr?: string;
+    audio: string;
+    format?: string;
+    style?: string;
+    provider?: string;
+    model?: string;
+    captions?: boolean;
+    editRequest?: string;
+  },
 ) {
   const absDir = resolve(dir);
   const runTemp = process.env.RUNNER_TEMP || mkdtempSync(join(tmpdir(), "gitcut-run-"));
@@ -276,6 +292,8 @@ async function runCreative(
     delete env.ELEVENLABS_API_KEY;
     if (opts.format) env.VIDEO_FORMAT = opts.format;
     if (opts.style) env.VIDEO_STYLE = opts.style;
+    if (opts.provider) env.AI_PROVIDER = opts.provider;
+    if (opts.model) env.AI_MODEL = opts.model;
     if (opts.captions !== undefined) env.CAPTIONS_MODE = opts.captions ? "on" : "off";
     if (opts.editRequest) env.EDIT_REQUEST = opts.editRequest;
     const args = [join(TEMPLATE_DIR, "scripts/creative.sh"), absDir];
@@ -315,7 +333,8 @@ async function runWizard() {
       ? [{ value: "edit", label: "Edit an existing video", hint: `Modify one of ${existingFilms.length} film(s) in ./.gitcut/` }]
       : []),
     { value: "setup-github", label: "Set up GitHub Actions", hint: "Add .gitcut.json + /gitcut PR workflow to this repo" },
-    { value: "doctor", label: "Check my setup (doctor)", hint: "Verify Node, Claude Code, jq, ffmpeg, and audio" },
+    { value: "providers", label: "View AI providers & models", hint: "Claude, Codex, Gemini, OpenCode, OpenRouter, Ollama…" },
+    { value: "doctor", label: "Check my setup (doctor)", hint: "Verify Node, AI providers, jq, ffmpeg, and audio" },
   ];
 
   let choice: string;
@@ -330,6 +349,11 @@ async function runWizard() {
       const report = formatDoctorReport(runDoctorChecks());
       console.log("\n" + report.text);
       if (!report.passed) process.exit(1);
+      return;
+    }
+
+    if (choice === "providers") {
+      console.log("\n" + formatProvidersTable(detectProviders()));
       return;
     }
 
@@ -387,6 +411,27 @@ async function runWizard() {
       { value: "terminal-brutalist", label: "Terminal Brutalist", hint: "Stark monochrome, sharp borders, monospace" },
       { value: "dark-glow", label: "Dark Glow", hint: "Sleek obsidian dark stage with ambient glow" },
     ]);
+    const readyProviders = detectProviders().filter((p) => p.available);
+    let provider = "auto";
+    let model: string | undefined;
+    if (readyProviders.length > 1) {
+      provider = await selectPrompt("Choose AI provider", [
+        { value: "auto", label: "Auto", hint: `Default (${readyProviders[0].info.label})` },
+        ...readyProviders.map((p) => ({
+          value: p.info.id,
+          label: p.info.label,
+          hint: p.info.shortHint,
+        })),
+      ]);
+      if (provider !== "auto") {
+        const info = PROVIDER_CATALOG[provider as keyof typeof PROVIDER_CATALOG];
+        const modelInput = await textPrompt(`Model for ${info.label} (optional)`, {
+          defaultValue: info.defaultModel || undefined,
+          placeholder: info.popularModels.slice(0, 3).join(", "),
+        });
+        if (modelInput) model = modelInput;
+      }
+    }
     const captions = await confirmPrompt("Burn synced captions into the video?", true);
     const audio = process.env.ELEVENLABS_API_KEY
       ? await selectPrompt("Audio mode", [
@@ -412,6 +457,7 @@ async function runWizard() {
           ["Repository", target],
           ["Format", format],
           ["Style", style],
+          ["AI", model ? `${provider} (${model})` : provider],
           ["Captions", captions ? "burned-in + .srt/.vtt" : ".srt/.vtt only"],
           ["Audio", audio === "elevenlabs" ? "ElevenLabs (voice + music + SFX)" : "Silent / captioned"],
           ["Output", outDir],
@@ -419,7 +465,7 @@ async function runWizard() {
       );
       if (!(await confirmPrompt("Generate this reel now?", true))) return;
       runSync("node", [scriptPath("repo-brief"), target, "--out", outDir], { cwd: process.cwd() });
-      await runCreative(outDir, { audio, format, style, captions });
+      await runCreative(outDir, { audio, format, style, provider, model, captions });
       return;
     }
 
@@ -453,6 +499,7 @@ async function runWizard() {
         ["Routes", routes || "AI auto-discovery"],
         ["Format", format],
         ["Style", style],
+        ["AI", model ? `${provider} (${model})` : provider],
         ["Captions", captions ? "burned-in + .srt/.vtt" : ".srt/.vtt only"],
         ["Audio", audio === "elevenlabs" ? "ElevenLabs (voice + music + SFX)" : "Silent / captioned"],
         ["Output", outDir],
@@ -463,9 +510,11 @@ async function runWizard() {
     if (title) briefArgs.push("--title", title);
     if (brief) briefArgs.push("--brief", brief);
     if (routes) briefArgs.push("--routes", routes);
+    if (provider && provider !== "auto") briefArgs.push("--provider", provider);
+    if (model) briefArgs.push("--model", model);
     runSync("node", briefArgs, { cwd: process.cwd() });
     runSync("node", [scriptPath("capture"), outDir]);
-    await runCreative(outDir, { audio, format, style, captions });
+    await runCreative(outDir, { audio, format, style, provider, model, captions });
   } catch (err) {
     if ((err as Error).message === "CANCELLED") return;
     throw err;
@@ -513,6 +562,11 @@ async function main() {
     const report = formatDoctorReport(runDoctorChecks({ skipAuth: values["skip-auth"] }));
     console.log(report.text);
     if (!report.passed) process.exit(1);
+    return;
+  }
+
+  if (cmd === "providers" || cmd === "models") {
+    console.log(formatProvidersTable(detectProviders()));
     return;
   }
 
@@ -593,6 +647,8 @@ async function main() {
         accent: { type: "string" },
         format: { type: "string", default: "vertical" },
         style: { type: "string", default: "auto" },
+        provider: { type: "string" },
+        model: { type: "string" },
         captions: { type: "boolean", default: false },
         "plan-only": { type: "boolean", default: false },
         audio: { type: "string", default: "auto" },
@@ -616,6 +672,8 @@ async function main() {
       audio: values.audio!,
       format: values.format,
       style: values.style,
+      provider: values.provider,
+      model: values.model,
       captions: values.captions || undefined,
     });
     return;
@@ -640,6 +698,8 @@ async function main() {
         response: { type: "string" },
         format: { type: "string" },
         style: { type: "string" },
+        provider: { type: "string" },
+        model: { type: "string" },
         captions: { type: "boolean", default: false },
         audio: { type: "string", default: "auto" },
       },
@@ -660,6 +720,8 @@ async function main() {
     }
     if (values.slug) briefArgs.push("--slug", values.slug);
     if (values.routes) briefArgs.push("--routes", values.routes);
+    if (values.provider) briefArgs.push("--provider", values.provider);
+    if (values.model) briefArgs.push("--model", values.model);
     if (values["prompt-only"]) briefArgs.push("--prompt-only");
     if (values.response) briefArgs.push("--response", resolve(values.response));
 
@@ -673,6 +735,8 @@ async function main() {
       audio: values.audio!,
       format: values.format,
       style: values.style,
+      provider: values.provider,
+      model: values.model,
       captions: values.captions || undefined,
     });
     return;
@@ -696,13 +760,15 @@ async function main() {
         pr: { type: "string" },
         format: { type: "string" },
         style: { type: "string" },
+        provider: { type: "string" },
+        model: { type: "string" },
         captions: { type: "boolean", default: false },
         audio: { type: "string", default: "auto" },
       },
     });
     const dir = positionals[0];
     if (!dir) {
-      console.error("usage: gitcut film <dir> [--pr owner/repo#123] [--format landscape|square|vertical] [--style auto|editorial-light|soft-studio|kinetic-bold|terminal-brutalist|dark-glow] [--captions] [--audio auto|elevenlabs|silent]");
+      console.error("usage: gitcut film <dir> [--pr owner/repo#123] [--format landscape|square|vertical] [--style <preset>] [--provider <id>] [--model <name>] [--captions] [--audio auto|elevenlabs|silent]");
       process.exit(2);
     }
     await runCreative(dir, {
@@ -710,6 +776,8 @@ async function main() {
       audio: values.audio!,
       format: values.format,
       style: values.style,
+      provider: values.provider,
+      model: values.model,
       captions: values.captions || undefined,
     });
     return;
@@ -719,15 +787,26 @@ async function main() {
     const { values, positionals } = parseArgs({
       args: rest,
       allowPositionals: true,
-      options: { pr: { type: "string" }, audio: { type: "string", default: "auto" } },
+      options: {
+        pr: { type: "string" },
+        provider: { type: "string" },
+        model: { type: "string" },
+        audio: { type: "string", default: "auto" },
+      },
     });
     const [dir, ...words] = positionals;
     const request = words.join(" ").trim();
     if (!dir || !request) {
-      console.error('usage: gitcut edit <dir> "<your request>" [--pr owner/repo#123] [--audio auto|elevenlabs|silent]');
+      console.error('usage: gitcut edit <dir> "<your request>" [--pr owner/repo#123] [--provider <id>] [--model <name>] [--audio auto|elevenlabs|silent]');
       process.exit(2);
     }
-    await runCreative(dir, { pr: values.pr, audio: values.audio!, editRequest: request });
+    await runCreative(dir, {
+      pr: values.pr,
+      audio: values.audio!,
+      provider: values.provider,
+      model: values.model,
+      editRequest: request,
+    });
     return;
   }
 

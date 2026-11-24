@@ -6,7 +6,7 @@ test("parseComment parses /gitcut and /video alias with options", () => {
   assert.deepEqual(parseComment("/gitcut"), { kind: "dispatch", dispatch: { mode: "plan" } });
   assert.deepEqual(parseComment("/video"), { kind: "dispatch", dispatch: { mode: "plan" } });
   assert.deepEqual(
-    parseComment("/video plan routes=/a,/b url=https://pr-1.vercel.app site=my-app clickup=86abc format=1:1 style=kinetic-bold captions=on"),
+    parseComment("/video plan routes=/a,/b url=https://pr-1.vercel.app site=my-app clickup=86abc format=1:1 style=kinetic-bold provider=opencode model=openai/gpt-5 captions=on"),
     {
       kind: "dispatch",
       dispatch: {
@@ -17,6 +17,8 @@ test("parseComment parses /gitcut and /video alias with options", () => {
         clickup: "86abc",
         format: "square",
         style: "kinetic-bold",
+        provider: "opencode",
+        model: "openai/gpt-5",
         captions: "on",
       },
     },
@@ -37,6 +39,8 @@ test("parseComment handles multiline /video edit requests and rejects invalid op
   assert.equal(parseComment("/video edit").kind, "error");
   assert.equal(parseComment("/video plan url=javascript:alert(1)").kind, "error");
   assert.equal(parseComment("/video plan style=not-a-style").kind, "error");
+  assert.equal(parseComment("/video plan provider=not-a-provider").kind, "error");
+  assert.equal(parseComment("/video plan model=bad;cmd").kind, "error");
   assert.equal(parseComment("/video approve url=https://example.com").kind, "error");
   assert.equal(parseComment("/video approve style=editorial-light").kind, "error");
   assert.equal(parseComment("/video nope").kind, "error");

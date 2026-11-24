@@ -9,6 +9,7 @@
 import { appendFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { normalizeFormat, type FormatName } from "./lib/format.ts";
+import { normalizeProvider, VALID_PROVIDERS, type ProviderId } from "./lib/providers.ts";
 import { normalizeStyle, VALID_STYLES, type StyleName } from "./lib/style.ts";
 
 export type Mode = "plan" | "recapture" | "render" | "edit";
@@ -20,6 +21,8 @@ export type Dispatch = {
   url?: string;
   format?: FormatName;
   style?: StyleName;
+  provider?: ProviderId;
+  model?: string;
   captions?: "on" | "off";
   request?: string;
 };
@@ -49,6 +52,7 @@ export const HELP = `**GitCut commands** (people with write access; \`/video\` a
 | \`/gitcut plan url=https://preview.example.com\` | Capture a specific preview/staging URL instead of the site's default \`baseUrl\`. |
 | \`/gitcut plan format=square\` (or \`vertical\`, \`1:1\`, \`9:16\`) | Set the canvas aspect ratio (default \`landscape\` / \`16:9\`). |
 | \`/gitcut plan style=editorial-light\` | Pick a visual style: \`auto\` (matches live CSS), \`brand-native\`, \`editorial-light\`, \`soft-studio\`, \`kinetic-bold\`, \`terminal-brutalist\`, or \`dark-glow\`. |
+| \`/gitcut plan provider=openai model=gpt-5\` | Pick an AI provider (\`claude\`, \`codex\`, \`openai\`, \`gemini\`, \`opencode\`, \`openrouter\`, \`deepseek\`, \`xai\`, \`groq\`, \`mistral\`, \`ollama\`) and optional model. |
 | \`/gitcut plan captions=on\` | Burn synced subtitles into the video (and export \`.srt\`/\`.vtt\`). |
 | \`/gitcut plan site=<name>\` | Capture from a named site (\`template/sites/<name>.json\`). |
 | \`/gitcut recapture\` | Re-capture from the branch's \`capture.json\`, then generate a new film. |
@@ -111,6 +115,13 @@ export function parseComment(body: string | undefined): ParsedCommand {
       const s = normalizeStyle(v);
       if (!s) return err(`style must be one of: ${VALID_STYLES.join(", ")}`);
       d.style = s;
+    } else if (k === "provider") {
+      const p = normalizeProvider(v);
+      if (!p) return err(`provider must be one of: ${VALID_PROVIDERS.join(", ")}`);
+      d.provider = p;
+    } else if (k === "model") {
+      if (!/^[a-z0-9._:/-]+$/i.test(v)) return err("model contains invalid characters");
+      d.model = v;
     } else if (k === "captions") {
       const c = v.toLowerCase();
       if (!["on", "off", "true", "false"].includes(c)) return err("captions must be on or off");
@@ -119,8 +130,8 @@ export function parseComment(body: string | undefined): ParsedCommand {
       return err(`Unknown option \`${k}\`.`);
     }
   }
-  if (mode !== "plan" && (d.routes || d.clickup || d.site || d.url || d.format || d.style || d.captions)) {
-    return err("routes=, clickup=, site=, url=, format=, style= and captions= only apply to `/gitcut plan`.");
+  if (mode !== "plan" && (d.routes || d.clickup || d.site || d.url || d.format || d.style || d.provider || d.model || d.captions)) {
+    return err("routes=, clickup=, site=, url=, format=, style=, provider=, model= and captions= only apply to `/gitcut plan`.");
   }
   return { kind: "dispatch", dispatch: d };
 }
@@ -147,6 +158,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       if (res.dispatch.url) writeOutput(out, "url", res.dispatch.url);
       if (res.dispatch.format) writeOutput(out, "format", res.dispatch.format);
       if (res.dispatch.style) writeOutput(out, "style", res.dispatch.style);
+      if (res.dispatch.provider) writeOutput(out, "provider", res.dispatch.provider);
+      if (res.dispatch.model) writeOutput(out, "model", res.dispatch.model);
       if (res.dispatch.captions) writeOutput(out, "captions", res.dispatch.captions);
       if (res.dispatch.request) writeOutput(out, "request", res.dispatch.request);
     } else if (res.kind === "help" || res.kind === "error") {

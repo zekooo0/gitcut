@@ -23,6 +23,15 @@ on:
         type: choice
         options: [auto, editorial-light, soft-studio, kinetic-bold, terminal-brutalist, dark-glow]
         default: auto
+      provider:
+        description: "AI provider"
+        type: choice
+        options: [auto, claude, codex, gemini-cli, opencode, anthropic, openai, gemini, openrouter, deepseek, xai, groq, mistral]
+        default: auto
+      model:
+        description: "Optional AI model override (e.g. sonnet, gpt-5, gemini-2.5-pro)"
+        required: false
+        default: ""
       captions:
         description: "Burn synced subtitles into the video"
         type: choice
@@ -58,12 +67,32 @@ on:
         description: "Optional hex accent color"
         type: string
         default: ""
-      creative_model:
-        description: "Claude model (default: sonnet)"
+      provider:
+        description: "AI provider: auto | claude | codex | gemini-cli | opencode | anthropic | openai | gemini | openrouter | deepseek | xai | groq | mistral"
         type: string
-        default: sonnet
+        default: auto
+      creative_model:
+        description: "Optional AI model override (e.g. sonnet, gpt-5, gemini-2.5-pro)"
+        type: string
+        default: ""
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+      GEMINI_API_KEY:
+        required: false
+      OPENROUTER_API_KEY:
+        required: false
+      DEEPSEEK_API_KEY:
+        required: false
+      XAI_API_KEY:
+        required: false
+      GROQ_API_KEY:
+        required: false
+      MISTRAL_API_KEY:
         required: false
       ELEVENLABS_API_KEY:
         required: false
@@ -110,8 +139,20 @@ jobs:
 
       - run: npm ci --no-audit --no-fund --prefer-offline
 
-      - name: Claude Code CLI
-        run: command -v claude >/dev/null || npm install -g --no-audit --no-fund @anthropic-ai/claude-code >/dev/null
+      - name: AI CLI (when using a CLI provider)
+        env:
+          REQ_PROVIDER: ${{ inputs.provider || 'auto' }}
+          HAS_CLAUDE_OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "$REQ_PROVIDER" = "claude" ] || { [ "$REQ_PROVIDER" = "auto" ] && [ "$HAS_CLAUDE_OAUTH" = "true" ]; }; then
+            command -v claude >/dev/null || npm install -g --no-audit --no-fund @anthropic-ai/claude-code >/dev/null
+          elif [ "$REQ_PROVIDER" = "codex" ]; then
+            command -v codex >/dev/null || npm install -g --no-audit --no-fund @openai/codex >/dev/null
+          elif [ "$REQ_PROVIDER" = "gemini-cli" ]; then
+            command -v gemini >/dev/null || npm install -g --no-audit --no-fund @google/gemini-cli >/dev/null
+          elif [ "$REQ_PROVIDER" = "opencode" ]; then
+            command -v opencode >/dev/null || npm install -g --no-audit --no-fund opencode-ai >/dev/null
+          fi
 
       - name: Gather repository context and README assets
         id: brief
@@ -150,7 +191,16 @@ jobs:
       - name: Generate and render repository reel
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          CREATIVE_MODEL: ${{ inputs.creative_model || vars.CREATIVE_MODEL || 'sonnet' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          AI_PROVIDER: ${{ inputs.provider || vars.AI_PROVIDER || 'auto' }}
+          CREATIVE_MODEL: ${{ inputs.model || inputs.creative_model || vars.CREATIVE_MODEL || '' }}
           AUDIO_MODE: ${{ steps.eleven.outputs.audio_mode || 'silent' }}
         run: |
           command -v ffmpeg >/dev/null || timeout 120 sudo apt-get install -y -qq ffmpeg >/dev/null || true

@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FormatName } from "./format.ts";
+import type { ProviderId } from "./providers.ts";
 import type { StyleName } from "./style.ts";
 
 export type ProductInfo = {
@@ -26,6 +27,10 @@ export type Site = {
   format?: FormatName;
   /** Visual direction preset: auto, brand-native, editorial-light, soft-studio, kinetic-bold, terminal-brutalist, dark-glow. */
   style?: StyleName;
+  /** Default AI provider: auto, claude, codex, gemini-cli, opencode, anthropic, openai, gemini, openrouter, deepseek, xai, groq, mistral, ollama, openai-compatible. */
+  provider?: ProviderId;
+  /** Default AI model override (e.g. sonnet, gpt-5, gemini-2.5-pro, anthropic/claude-sonnet-4-5). */
+  model?: string;
   /** Burn synced subtitles into voice-over films by default. */
   captions?: boolean;
   viewport?: { width: number; height: number; dpr?: number };

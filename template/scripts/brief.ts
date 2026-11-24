@@ -21,12 +21,13 @@
  *      GITHUB_TOKEN (falls back to `gh auth token`, PR mode only), CLICKUP_TOKEN (optional),
  *      CAPTURE_STORAGE_STATE or login env vars from the site config (discovery signs in).
  */
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { loadSite, type Site } from "./lib/site.ts";
+import { callTextCompletion, detectProviders } from "./lib/providers.ts";
 import { detectPreviewUrl, type CommentCandidate, type DeploymentCandidate } from "./lib/preview-url.ts";
 import { slugFor } from "./slug.ts";
 
@@ -77,6 +78,8 @@ async function main() {
       site: { type: "string" }, // named site in template/sites/, or path to a .json file
       slug: { type: "string" },
       routes: { type: "string" },
+      provider: { type: "string" },
+      model: { type: "string" },
       "prompt-only": { type: "boolean", default: false },
       "auto-preview": { type: "boolean", default: false },
       response: { type: "string" },
@@ -265,64 +268,14 @@ async function main() {
   };
 
   /* ---------------- LLM ---------------- */
-  const MODEL = process.env.BRIEF_MODEL;
   const llm = async (system: string, user: string): Promise<string> => {
-    if (process.env.ANTHROPIC_API_KEY) {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model: MODEL || "claude-sonnet-4-5",
-          max_tokens: 8000,
-          system,
-          messages: [{ role: "user", content: user }],
-        }),
-      });
-      if (!r.ok) throw new Error(`Anthropic: ${r.status} ${await r.text()}`);
-      const j = await r.json();
-      return j.content.map((c: { text?: string }) => c.text ?? "").join("");
-    }
-    if (process.env.OPENAI_API_KEY) {
-      const base = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-      const r = await fetch(`${base}/chat/completions`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "content-type": "application/json" },
-        body: JSON.stringify({
-          model: MODEL || "gpt-6.1-terra",
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: user },
-          ],
-        }),
-      });
-      if (!r.ok) throw new Error(`OpenAI: ${r.status} ${await r.text()}`);
-      return (await r.json()).choices[0].message.content;
-    }
-    const hasClaudeCli =
-      Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) ||
-      spawnSync("which", ["claude"], { encoding: "utf8" }).status === 0;
-    if (hasClaudeCli) {
-      // Uses either CLAUDE_CODE_OAUTH_TOKEN (CI) or the locally signed-in Claude Code CLI.
-      // One turn, no tools: a plain completion. The user prompt goes on stdin (it is large).
-      const env = { ...process.env };
-      delete env.ANTHROPIC_API_KEY;
-      const out = execFileSync(
-        "claude",
-        ["-p", "--model", MODEL || "sonnet", "--system-prompt", system, "--max-turns", "1",
-         "--output-format", "json"],
-        { input: user, env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 10 * 60_000 },
-      );
-      const j = JSON.parse(out);
-      if (j.is_error) throw new Error(`Claude Code: ${j.result ?? out.slice(0, 500)}`);
-      return j.result as string;
-    }
-    throw new Error(
-      "no LLM available: sign in with `claude` CLI, or set ANTHROPIC_API_KEY, OPENAI_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN",
-    );
+    const { text } = await callTextCompletion({
+      provider: args.provider || process.env.BRIEF_PROVIDER || process.env.AI_PROVIDER,
+      model: args.model || process.env.BRIEF_MODEL || process.env.AI_MODEL,
+      system,
+      user,
+    });
+    return text;
   };
 
   const parseJson = (text: string) => {
@@ -495,7 +448,8 @@ Which 1-4 app routes show what changed, as ${audience} would see it? Prefer the 
 where the feature lives, then pages it changes. Answer:
 {"routes": ["/path", ...], "why": "<one sentence>"}`;
     writeFileSync(join(outDir, "prompts/pass1.md"), p1);
-    if (args["prompt-only"] && !process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
+    const hasAnyProvider = detectProviders().some((p) => p.available);
+    if (args["prompt-only"] && !hasAnyProvider) {
       console.log(`prompt-only: wrote ${outDir}/prompts/pass1.md; re-run with --routes to continue`);
       process.exit(0);
     }

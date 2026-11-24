@@ -3,6 +3,7 @@
  * Zero external dependencies.
  */
 import { spawnSync } from "node:child_process";
+import { detectProviders } from "./providers.ts";
 
 export type CheckResult = {
   name: string;
@@ -46,30 +47,24 @@ export function runDoctorChecks(opts: { skipAuth?: boolean; env?: NodeJS.Process
     fix: major >= 24 ? undefined : "Install Node.js 24+ from https://nodejs.org (or `nvm install 24`).",
   });
 
-  // 2. Claude Code CLI
-  const hasClaude = cmdExists("claude");
-  if (!hasClaude) {
+  // 2. AI Providers (any supported coding CLI or direct API key works!)
+  const providers = detectProviders({ env });
+  const ready = providers.filter((p) => p.available);
+  if (ready.length === 0) {
     results.push({
-      name: "Claude Code CLI",
+      name: "AI Provider",
       required: true,
       ok: false,
-      detail: "not installed",
-      fix: "Run `npm install -g @anthropic-ai/claude-code`, then run `claude` once to sign in.",
+      detail: "none detected",
+      fix: "Install a CLI (`claude`, `codex`, `gemini`, or `opencode`) OR set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, DEEPSEEK_API_KEY, XAI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY, or OLLAMA_HOST).",
     });
-  } else if (opts.skipAuth) {
-    results.push({ name: "Claude Code CLI", required: true, ok: true, detail: "installed (auth check skipped)" });
   } else {
-    const auth = spawnSync("claude", ["-p", "Reply ok", "--model", "haiku"], {
-      encoding: "utf8",
-      timeout: 20_000,
-    });
-    const ok = auth.status === 0;
+    const summary = ready.map((p) => p.info.id).join(", ");
     results.push({
-      name: "Claude Code CLI",
+      name: "AI Provider",
       required: true,
-      ok,
-      detail: ok ? "installed & signed in" : "installed, but not signed in",
-      fix: ok ? undefined : "Run `claude` in your terminal to sign in, or set CLAUDE_CODE_OAUTH_TOKEN.",
+      ok: true,
+      detail: `${ready.length} available (${summary})`,
     });
   }
 

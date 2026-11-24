@@ -56,6 +56,10 @@ on:
         description: "Optional visual direction: auto | brand-native | editorial-light | soft-studio | kinetic-bold | terminal-brutalist | dark-glow"
         type: string
         default: ""
+      provider:
+        description: "AI provider: auto | claude | codex | gemini-cli | opencode | anthropic | openai | gemini | openrouter | deepseek | xai | groq | mistral | ollama"
+        type: string
+        default: auto
       captions:
         description: "Optional burned-in captions toggle: on | off"
         type: string
@@ -73,9 +77,9 @@ on:
         type: string
         default: ubuntu-latest
       creative_model:
-        description: "Claude model for the creative agent (default: sonnet)"
+        description: "Optional model override for the creative agent (e.g. sonnet, gpt-5, gemini-2.5-pro)"
         type: string
-        default: sonnet
+        default: ""
       brief_model:
         description: "Optional LLM model override for the planner"
         type: string
@@ -94,6 +98,18 @@ on:
       ANTHROPIC_API_KEY:
         required: false
       OPENAI_API_KEY:
+        required: false
+      GEMINI_API_KEY:
+        required: false
+      OPENROUTER_API_KEY:
+        required: false
+      DEEPSEEK_API_KEY:
+        required: false
+      XAI_API_KEY:
+        required: false
+      GROQ_API_KEY:
+        required: false
+      MISTRAL_API_KEY:
         required: false
       DEMO_EMAIL:
         required: false
@@ -140,6 +156,13 @@ jobs:
       DEMO_PASSWORD: ${{ secrets.DEMO_PASSWORD }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      AI_PROVIDER: ${{ inputs.provider || 'auto' }}
       BRIEF_MODEL: ${{ inputs.brief_model }}
       CLICKUP_TOKEN: ${{ secrets.CLICKUP_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -173,6 +196,7 @@ jobs:
           DIRECT_URL: ${{ inputs.url }}
           DIRECT_FORMAT: ${{ inputs.format }}
           DIRECT_STYLE: ${{ inputs.style }}
+          DIRECT_PROVIDER: ${{ inputs.provider }}
           DIRECT_CAPTIONS: ${{ inputs.captions }}
           DIRECT_CLICKUP: ${{ inputs.clickup }}
           DIRECT_REQUEST: ${{ inputs.request }}
@@ -185,6 +209,7 @@ jobs:
             echo "url=$DIRECT_URL" >> "$GITHUB_OUTPUT"
             echo "format=$DIRECT_FORMAT" >> "$GITHUB_OUTPUT"
             echo "style=$DIRECT_STYLE" >> "$GITHUB_OUTPUT"
+            echo "provider=$DIRECT_PROVIDER" >> "$GITHUB_OUTPUT"
             echo "captions=$DIRECT_CAPTIONS" >> "$GITHUB_OUTPUT"
             echo "clickup=$DIRECT_CLICKUP" >> "$GITHUB_OUTPUT"
             if [ -n "$DIRECT_REQUEST" ]; then
@@ -290,15 +315,29 @@ jobs:
             echo "::warning::apt mirrors unreachable; installing Chromium without system deps"
             npx playwright install chromium; }
 
-      - name: Claude Code CLI
+      - name: AI CLI (when using a CLI provider)
         if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode != 'render'
-        run: command -v claude >/dev/null || npm install -g --no-audit --no-fund @anthropic-ai/claude-code >/dev/null
+        env:
+          REQ_PROVIDER: ${{ steps.cmd.outputs.provider || inputs.provider || 'auto' }}
+          HAS_CLAUDE_OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "$REQ_PROVIDER" = "claude" ] || { [ "$REQ_PROVIDER" = "auto" ] && [ "$HAS_CLAUDE_OAUTH" = "true" ]; }; then
+            command -v claude >/dev/null || npm install -g --no-audit --no-fund @anthropic-ai/claude-code >/dev/null
+          elif [ "$REQ_PROVIDER" = "codex" ]; then
+            command -v codex >/dev/null || npm install -g --no-audit --no-fund @openai/codex >/dev/null
+          elif [ "$REQ_PROVIDER" = "gemini-cli" ]; then
+            command -v gemini >/dev/null || npm install -g --no-audit --no-fund @google/gemini-cli >/dev/null
+          elif [ "$REQ_PROVIDER" = "opencode" ]; then
+            command -v opencode >/dev/null || npm install -g --no-audit --no-fund opencode-ai >/dev/null
+          fi
 
       - name: Plan (LLM brief)
         if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode == 'plan'
         working-directory: _fv_pipeline/template
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          AI_PROVIDER: ${{ steps.cmd.outputs.provider || inputs.provider || 'auto' }}
+          BRIEF_MODEL: ${{ inputs.brief_model || steps.cmd.outputs.model }}
           INPUT_ROUTES: ${{ steps.cmd.outputs.routes }}
           INPUT_CLICKUP: ${{ steps.cmd.outputs.clickup }}
           INPUT_SITE: ${{ steps.cmd.outputs.site }}
@@ -341,19 +380,18 @@ jobs:
           done
           cat "$RUNNER_TEMP/eleven.log"; exit 1
 
-      - name: Creative film (Claude Code + video-shotcraft)
+      - name: Creative film (AI Director + video-shotcraft)
         if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode != 'render'
         working-directory: _fv_pipeline/template
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          CREATIVE_MODEL: ${{ inputs.creative_model }}
+          AI_PROVIDER: ${{ steps.cmd.outputs.provider || inputs.provider || 'auto' }}
+          CREATIVE_MODEL: ${{ steps.cmd.outputs.model || inputs.creative_model }}
           AUDIO_MODE: ${{ steps.eleven.outputs.audio_mode || 'silent' }}
           VIDEO_FORMAT: ${{ steps.cmd.outputs.format }}
           VIDEO_STYLE: ${{ steps.cmd.outputs.style }}
           CAPTIONS_MODE: ${{ steps.cmd.outputs.captions }}
           EDIT_REQUEST: ${{ steps.cmd.outputs.mode == 'edit' && steps.cmd.outputs.request || '' }}
-          ANTHROPIC_API_KEY: ""
-          OPENAI_API_KEY: ""
           DEMO_EMAIL: ""
           DEMO_PASSWORD: ""
           CLICKUP_TOKEN: ""

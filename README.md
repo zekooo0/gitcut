@@ -53,7 +53,7 @@ preview/final MP4s are published as GitHub Releases using `GITHUB_TOKEN`.
 
 ## Quickstart 2: Local CLI & Guided Wizard (works without GitHub PRs)
 
-Requirements: Node 24+, Claude Code CLI signed in, `jq`, optional `ffmpeg` (contact sheets & SFX).
+Requirements: Node 24+, **any supported AI provider** (Claude Code, OpenAI Codex, Gemini CLI, OpenCode, or an API key for Anthropic/OpenAI/Gemini/OpenRouter/DeepSeek/xAI/Groq/Mistral/Ollama), `jq`, optional `ffmpeg` (contact sheets & SFX).
 
 ```bash
 # Install globally (optional — gives you the short `gitcut` command):
@@ -61,11 +61,16 @@ npm install -g gitcut-cli
 
 # Or run directly with npx (no install needed!):
 npx gitcut-cli doctor       # Check your setup in 2 seconds
+npx gitcut-cli providers    # See all detected AI CLIs & API keys
 npx gitcut-cli              # Launch the interactive wizard (no flags to remember!)
 
-# Or run directly via flags:
+# Or run directly via flags (use ANY supported AI provider/model):
 # 1. Generate a 15-30s repository reel from ANY GitHub repo or local folder (no browser needed!)
 npx gitcut-cli repo zekooo0/gitcut --format vertical --captions
+npx gitcut-cli repo zekooo0/gitcut --provider codex --model gpt-5.4
+npx gitcut-cli repo zekooo0/gitcut --provider gemini --model gemini-2.5-pro
+npx gitcut-cli repo zekooo0/gitcut --provider opencode --model anthropic/claude-sonnet-4-5
+npx gitcut-cli repo zekooo0/gitcut --provider openrouter --model deepseek/deepseek-chat-v3-0324
 
 # 2. Generate a live-UI feature film (install Playwright browser once: npx playwright install chromium)
 npx gitcut-cli create \
@@ -85,6 +90,31 @@ npx gitcut-cli render .gitcut/dark-mode-toggle --out ./dark-mode.mp4
 
 ---
 
+## Supported AI providers & models
+
+GitCut works with both **agentic coding CLIs** (using your existing subscription or API key) and a **built-in zero-dependency multimodal agent** that calls provider HTTP APIs directly (no third-party CLI install required).
+
+| Provider (`--provider`) | Type | Auth / Env Var | Example `--model` |
+|---|---|---|---|
+| `claude` | Coding CLI | `claude` sign-in or `CLAUDE_CODE_OAUTH_TOKEN` | `sonnet`, `opus`, `haiku` |
+| `codex` | Coding CLI | `codex` sign-in or `OPENAI_API_KEY` | `gpt-5.4`, `gpt-5.3-codex`, `o3` |
+| `gemini-cli` | Coding CLI | `gemini` sign-in or `GEMINI_API_KEY` | `gemini-2.5-pro`, `gemini-2.5-flash` |
+| `opencode` | Coding CLI | `opencode auth login` (75+ providers) | `anthropic/claude-sonnet-4-5`, `openai/gpt-5` |
+| `anthropic` | Direct API | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5`, `claude-opus-4-1` |
+| `openai` | Direct API | `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`) | `gpt-5`, `gpt-4.1`, `gpt-4o`, `o3` |
+| `gemini` | Direct API | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | `gemini-2.5-pro`, `gemini-2.5-flash` |
+| `openrouter` | Direct API | `OPENROUTER_API_KEY` (200+ models) | `anthropic/claude-sonnet-4.5`, `qwen/qwen3-coder` |
+| `deepseek` | Direct API | `DEEPSEEK_API_KEY` | `deepseek-chat`, `deepseek-reasoner` |
+| `xai` (alias `grok`) | Direct API | `XAI_API_KEY` | `grok-4`, `grok-3` |
+| `mistral` | Direct API | `MISTRAL_API_KEY` | `mistral-large-latest`, `codestral-latest` |
+| `groq` | Direct API | `GROQ_API_KEY` | `llama-3.3-70b-versatile`, `qwen/qwen3-32b` |
+| `ollama` | Local API | `OLLAMA_HOST` + `OLLAMA_MODEL` | `qwen2.5-coder:32b`, `qwen3:32b` |
+| `openai-compatible` | Custom API | `AI_BASE_URL` (+ optional `AI_API_KEY`) | LM Studio, vLLM, Together, Azure, etc. |
+
+Pass `--provider <id> --model <name>` on the CLI, pick it in the interactive wizard (`npx gitcut-cli`), set `provider` / `model` in `.gitcut.json`, or pass `provider=openai model=gpt-5` in a `/gitcut plan` PR comment.
+
+---
+
 ## PR commands (write access required; `/video` also works as an alias)
 
 | Command | Result |
@@ -94,6 +124,7 @@ npx gitcut-cli render .gitcut/dark-mode-toggle --out ./dark-mode.mp4
 | `/gitcut plan url=https://pr-42.vercel.app` | Capture a specific preview/staging URL instead of the site's default `baseUrl`. |
 | `/gitcut plan format=square` (or `vertical`, `1:1`, `9:16`) | Set the canvas aspect ratio (`landscape` 1920×1080 default, `square` 1080×1080, `vertical` 1080×1920). |
 | `/gitcut plan style=editorial-light` | Pick a visual direction preset: `auto` (matches live CSS), `brand-native`, `editorial-light`, `soft-studio`, `kinetic-bold`, `terminal-brutalist`, or `dark-glow`. |
+| `/gitcut plan provider=openai model=gpt-5` | Choose the AI provider (`claude`, `codex`, `openai`, `gemini`, `opencode`, `openrouter`, `deepseek`, `xai`, `groq`, `mistral`, `ollama`) and optional model. |
 | `/gitcut plan captions=on` | Burn synced subtitles into the video (and export `.srt` + `.vtt` release assets). |
 | `/gitcut plan site=<name>` | Use a named site config (`template/sites/<name>.json`). |
 | `/gitcut plan clickup=<taskId>` | Link a specific ClickUp task (otherwise parsed from PR body/branch). |

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeToolUse, formatElapsed } from "./stream-progress.ts";
+import { describeToolUse, formatElapsed, parseAgentStreamEvent } from "./stream-progress.ts";
 
 test("formatElapsed formats milliseconds as mm:ss", () => {
   assert.equal(formatElapsed(0), "00:00");
@@ -46,4 +46,32 @@ test("describeToolUse maps ElevenLabs, Remotion, Write, and Read events cleanly"
   assert.equal(describeToolUse("Write", { file_path: "/tmp/x/creative/captions.json" }).label, "Writing captions.json");
   assert.equal(describeToolUse("Edit", { file_path: "/tmp/x/creative/film/src/Film.tsx" }).label, "Writing src/Film.tsx");
   assert.equal(describeToolUse("Read", { file_path: "/tmp/x/shotcraft/SKILL.md" }).group, "read-skill");
+});
+
+test("parseAgentStreamEvent normalizes Codex, Gemini CLI, OpenCode, and Claude/agent streams", () => {
+  // Codex CLI
+  const codex = parseAgentStreamEvent({
+    type: "item.started",
+    item: { type: "command_execution", command: "cd film && npm run render" },
+  });
+  assert.match(codex.events[0]?.label ?? "", /Rendering final MP4/);
+
+  // Gemini CLI
+  const gemini = parseAgentStreamEvent({
+    type: "tool_use",
+    tool_name: "write_file",
+    parameters: { file_path: "/tmp/x/creative/STRATEGY.md" },
+  });
+  assert.equal(gemini.events[0]?.label, "Crafting creative strategy (STRATEGY.md)");
+
+  // OpenCode CLI
+  const opencode = parseAgentStreamEvent({
+    type: "tool_use",
+    part: { tool: "read", state: { input: { file_path: "/tmp/x/creative/input/theme.json" } } },
+  });
+  assert.equal(opencode.events[0]?.label, "Reading theme.json");
+
+  const stepFinish = parseAgentStreamEvent({ type: "step_finish", part: { cost: 0.05 } });
+  assert.equal(stepFinish.turnsDelta, 1);
+  assert.equal(stepFinish.costUsd, 0.05);
 });

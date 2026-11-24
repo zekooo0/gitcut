@@ -39,10 +39,11 @@ function extractMp3(cmd: string): string {
   return m ? basename(m[1]) : "";
 }
 
-/** Map a Claude `tool_use` block into a crisp human-readable progress event. */
+/** Map a tool call (from Claude Code, Codex, Gemini CLI, OpenCode, or built-in agent) into a progress event. */
 export function describeToolUse(name: string, input: Record<string, unknown> = {}): ProgressEvent {
-  if (name === "Bash") {
-    const cmd = String(input.command ?? "").trim();
+  const norm = name.trim().toLowerCase();
+  if (norm === "bash" || norm === "run_shell_command" || norm === "shell" || norm === "command_execution") {
+    const cmd = String(input.command ?? input.cmd ?? "").trim();
     if (/eleven\.(ts|js)\b/.test(cmd)) {
       const hasTts = /\btts\b/.test(cmd);
       const hasMusic = /\bmusic\b/.test(cmd);
@@ -91,8 +92,17 @@ export function describeToolUse(name: string, input: Record<string, unknown> = {
     return { icon: "⚙️ ", label: clean ? `Running: ${clean}` : "Running command" };
   }
 
-  if (name === "Write" || name === "Edit" || name === "MultiEdit") {
-    const p = shortPath(input.file_path ?? input.path);
+  if (
+    norm === "write" ||
+    norm === "edit" ||
+    norm === "multiedit" ||
+    norm === "write_file" ||
+    norm === "replace" ||
+    norm === "edit_file" ||
+    norm === "file_change" ||
+    norm === "patch"
+  ) {
+    const p = shortPath(input.file_path ?? input.path ?? input.target_file);
     if (p.endsWith("STRATEGY.md")) return { icon: "🧠", label: "Crafting creative strategy (STRATEGY.md)" };
     if (p.endsWith("NOTES.md")) return { icon: "📝", label: "Writing NOTES.md" };
     if (p.endsWith("CHANGES.md")) return { icon: "📝", label: "Writing CHANGES.md" };
@@ -100,9 +110,18 @@ export function describeToolUse(name: string, input: Record<string, unknown> = {
     return { icon: "✏️ ", label: p ? `Writing ${p}` : "Editing film files" };
   }
 
-  if (name === "Read" || name === "Glob" || name === "Grep" || name === "LS") {
-    const p = shortPath(input.file_path ?? input.path ?? input.pattern);
-    if (/shotcraft|SHOTS\.md|shots\.md/i.test(String(input.file_path ?? input.path ?? ""))) {
+  if (
+    norm === "read" ||
+    norm === "read_file" ||
+    norm === "glob" ||
+    norm === "grep" ||
+    norm === "ls" ||
+    norm === "list" ||
+    norm === "list_directory" ||
+    norm === "search_file_content"
+  ) {
+    const p = shortPath(input.file_path ?? input.path ?? input.pattern ?? input.dir_path);
+    if (/shotcraft|SHOTS\.md|shots\.md/i.test(String(input.file_path ?? input.path ?? input.dir_path ?? ""))) {
       return { icon: "🎬", label: "Studying video-shotcraft shot cards", group: "read-skill" };
     }
     if (/BRIEF\.md|EDIT\.md|facts\.md|readme\.md|pr\.md|repo\.json|theme\.json/i.test(p)) {
@@ -112,6 +131,55 @@ export function describeToolUse(name: string, input: Record<string, unknown> = {
   }
 
   return { icon: "✨", label: name || "Working" };
+}
+
+/** Extract normalized tool-call progress events and turn/cost increments from any supported agent's JSONL event. */
+export function parseAgentStreamEvent(msg: Record<string, any>): {
+  events: ProgressEvent[];
+  turnsDelta: number;
+  costUsd?: number;
+} {
+  const events: ProgressEvent[] = [];
+  let turnsDelta = 0;
+  let costUsd: number | undefined;
+
+  // 1. Claude Code CLI & built-in agent.ts
+  if (msg.type === "assistant" && Array.isArray(msg.message?.content)) {
+    for (const block of msg.message.content) {
+      if (block?.type === "tool_use") {
+        events.push(describeToolUse(String(block.name ?? ""), (block.input ?? {}) as Record<string, unknown>));
+      }
+    }
+  } else if (msg.type === "result") {
+    turnsDelta = Number(msg.num_turns ?? msg.stats?.tool_calls ?? 0);
+    if (typeof msg.total_cost_usd === "number") costUsd = msg.total_cost_usd;
+  }
+  // 2. Google Gemini CLI (`--output-format stream-json`)
+  else if (msg.type === "tool_use" && typeof msg.tool_name === "string") {
+    events.push(describeToolUse(msg.tool_name, (msg.parameters ?? msg.args ?? {}) as Record<string, unknown>));
+  }
+  // 3. OpenCode CLI (`opencode run --format json`)
+  else if (msg.type === "tool_use" && msg.part && typeof msg.part.tool === "string") {
+    const input = (msg.part.state?.input ?? msg.part.input ?? {}) as Record<string, unknown>;
+    events.push(describeToolUse(msg.part.tool, input));
+  } else if (msg.type === "step_finish") {
+    turnsDelta = 1;
+    if (typeof msg.part?.cost === "number") costUsd = msg.part.cost;
+  }
+  // 4. OpenAI Codex CLI (`codex exec --json`)
+  else if ((msg.type === "item.started" || msg.type === "item.completed") && msg.item) {
+    const item = msg.item as Record<string, any>;
+    if (item.type === "command_execution" && msg.type === "item.started") {
+      events.push(describeToolUse("Bash", { command: item.command ?? "" }));
+    } else if (item.type === "file_change" && msg.type === "item.completed") {
+      const firstPath = Array.isArray(item.changes) ? item.changes[0]?.path : item.path;
+      events.push(describeToolUse("Write", { file_path: firstPath ?? "" }));
+    }
+  } else if (msg.type === "turn.completed") {
+    turnsDelta = 1;
+  }
+
+  return { events, turnsDelta, costUsd };
 }
 
 async function run() {
@@ -181,24 +249,16 @@ async function run() {
       continue;
     }
 
-    if (msg.type === "assistant") {
-      const content = msg.message?.content;
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block?.type === "tool_use") {
-            const ev = describeToolUse(String(block.name ?? ""), (block.input ?? {}) as Record<string, unknown>);
-            activeLabel = `${ev.label}…`;
-            lastStepAt = Date.now();
-            if (ev.group && ev.group === lastGroup) continue;
-            lastGroup = ev.group;
-            emitLine(ev.icon, ev.label);
-          }
-        }
-      }
-    } else if (msg.type === "result") {
-      turns += Number(msg.num_turns ?? 0);
-      if (typeof msg.total_cost_usd === "number") cost = msg.total_cost_usd;
+    const parsed = parseAgentStreamEvent(msg);
+    for (const ev of parsed.events) {
+      activeLabel = `${ev.label}…`;
+      lastStepAt = Date.now();
+      if (ev.group && ev.group === lastGroup) continue;
+      lastGroup = ev.group;
+      emitLine(ev.icon, ev.label);
     }
+    if (parsed.turnsDelta > 0) turns += parsed.turnsDelta;
+    if (typeof parsed.costUsd === "number") cost += parsed.costUsd;
   }
 
   if (timer) clearInterval(timer);

@@ -34,14 +34,18 @@ if [ -f "$D/repo.json" ] && [ ! -f "$D/capture.json" ]; then
   REPO_MODE=1
 fi
 
-# Read brand/product/format/style metadata from repo.json (repo mode) or site config (UI mode).
-SITE_META=$(SCRIPTS_DIR="$SCRIPTS_DIR" SCRIPT_EXT="$SCRIPT_EXT" REPO_MODE="$REPO_MODE" VIDEO_FORMAT="${VIDEO_FORMAT:-}" VIDEO_STYLE="${VIDEO_STYLE:-}" CAPTIONS_MODE="${CAPTIONS_MODE:-}" node --input-type=module -e '
+# Read brand/product/format/style/provider metadata from repo.json (repo mode) or site config (UI mode).
+SITE_META=$(SCRIPTS_DIR="$SCRIPTS_DIR" SCRIPT_EXT="$SCRIPT_EXT" REPO_MODE="$REPO_MODE" \
+  VIDEO_FORMAT="${VIDEO_FORMAT:-}" VIDEO_STYLE="${VIDEO_STYLE:-}" CAPTIONS_MODE="${CAPTIONS_MODE:-}" \
+  AI_PROVIDER="${CREATIVE_PROVIDER:-${AI_PROVIDER:-}}" AI_MODEL="${CREATIVE_MODEL:-${AI_MODEL:-}}" \
+  node --input-type=module -e '
   import fs from "node:fs";
   import path from "node:path";
   import { pathToFileURL } from "node:url";
   const { loadSiteForDir } = await import(pathToFileURL(path.join(process.env.SCRIPTS_DIR, `lib/site.${process.env.SCRIPT_EXT}`)).href);
   const { resolveFormat } = await import(pathToFileURL(path.join(process.env.SCRIPTS_DIR, `lib/format.${process.env.SCRIPT_EXT}`)).href);
   const { resolveStyle } = await import(pathToFileURL(path.join(process.env.SCRIPTS_DIR, `lib/style.${process.env.SCRIPT_EXT}`)).href);
+  const { resolveProvider } = await import(pathToFileURL(path.join(process.env.SCRIPTS_DIR, `lib/providers.${process.env.SCRIPT_EXT}`)).href);
   const dir = process.argv[1];
   const isRepo = process.env.REPO_MODE === "1";
   const s = isRepo
@@ -56,6 +60,10 @@ SITE_META=$(SCRIPTS_DIR="$SCRIPTS_DIR" SCRIPT_EXT="$SCRIPT_EXT" REPO_MODE="$REPO
     seed: s.fullName || s.name || s.product?.name || path.basename(dir),
     accentOverride: s.brand?.accent || undefined,
   });
+  const providerSpec = resolveProvider(process.env.AI_PROVIDER || s.provider || "auto", {
+    model: process.env.AI_MODEL || s.model || undefined,
+    purpose: "creative",
+  });
   const capEnv = (process.env.CAPTIONS_MODE || "").trim().toLowerCase();
   const captions = capEnv ? ["on", "true", "1", "yes"].includes(capEnv) : Boolean(s.captions);
   console.log(JSON.stringify({
@@ -69,6 +77,10 @@ SITE_META=$(SCRIPTS_DIR="$SCRIPTS_DIR" SCRIPT_EXT="$SCRIPT_EXT" REPO_MODE="$REPO
     formatGuidance: fmt.guidance,
     styleName: styleSpec.name,
     styleLabel: styleSpec.label,
+    providerId: providerSpec.id,
+    providerLabel: providerSpec.info.label,
+    providerKind: providerSpec.info.kind,
+    model: providerSpec.model,
     captions,
   }));
 ' "$D")
@@ -81,6 +93,10 @@ FMT_HEIGHT=$(jq -r .height <<<"$SITE_META")
 FMT_GUIDANCE=$(jq -r .formatGuidance <<<"$SITE_META")
 STYLE_NAME=$(jq -r .styleName <<<"$SITE_META")
 STYLE_LABEL=$(jq -r .styleLabel <<<"$SITE_META")
+PROVIDER_ID=$(jq -r .providerId <<<"$SITE_META")
+PROVIDER_LABEL=$(jq -r .providerLabel <<<"$SITE_META")
+PROVIDER_KIND=$(jq -r .providerKind <<<"$SITE_META")
+RESOLVED_MODEL=$(jq -r .model <<<"$SITE_META")
 CAPTIONS_ON=$(jq -r .captions <<<"$SITE_META")
 
 # Resolve audio mode: auto uses ElevenLabs if the local proxy is up, otherwise silent/captioned mode.
@@ -106,7 +122,7 @@ echo "🎬 GitCut · $MODE_LABEL"
 echo "   Canvas   $FMT_NAME (${FMT_WIDTH}x${FMT_HEIGHT}) · captions $([ "$CAPTIONS_ON" = "true" ] && echo on || echo off)"
 echo "   Style    $STYLE_LABEL ($STYLE_NAME)"
 echo "   Audio    $([ "$AUDIO_MODE" = "elevenlabs" ] && echo "ElevenLabs (voice-over, music & SFX)" || echo "silent / captioned mode")"
-echo "   Model    ${CREATIVE_MODEL:-sonnet}"
+echo "   AI       $PROVIDER_LABEL${RESOLVED_MODEL:+ · $RESOLVED_MODEL}"
 echo "   Output   $D"
 echo ""
 
@@ -300,24 +316,63 @@ already in film/public untouched).`;
 ' "$TEMPLATE" "$C/$BRIEF_FILE"
 
 cd "$C"
-# Auth preflight: fail in seconds with a clear message, not after the agent's 10 retries.
-[ -z "${ANTHROPIC_API_KEY:-}" ] && unset ANTHROPIC_API_KEY
-if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-  T="$CLAUDE_CODE_OAUTH_TOKEN"
-  echo "CLAUDE_CODE_OAUTH_TOKEN: ${#T} chars, prefix ok: $([[ "$T" == sk-ant-oat* ]] && echo yes || echo NO), whitespace: $([[ "$T" =~ [[:space:]] ]] && echo YES || echo no)"
+# Provider-specific auth/binary preflight so problems fail in seconds, not mid-render.
+run_director_agent() {
+  case "$PROVIDER_ID" in
+    claude)
+      [ -z "${ANTHROPIC_API_KEY:-}" ] && unset ANTHROPIC_API_KEY
+      local args=(-p "$TASK" --dangerously-skip-permissions --add-dir "$SKILL" --output-format stream-json --verbose)
+      [ -n "$RESOLVED_MODEL" ] && args+=(--model "$RESOLVED_MODEL")
+      timeout "${CREATIVE_TIMEOUT:-40m}" claude "${args[@]}" 2>&1
+      ;;
+    codex)
+      local args=(exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --add-dir "$SKILL" --json)
+      [ -n "$RESOLVED_MODEL" ] && args+=(-m "$RESOLVED_MODEL")
+      args+=("$TASK")
+      timeout "${CREATIVE_TIMEOUT:-40m}" codex "${args[@]}" 2>&1
+      ;;
+    gemini-cli)
+      local args=(-p "$TASK" --approval-mode yolo --skip-trust --include-directories "$SKILL" --output-format stream-json)
+      [ -n "$RESOLVED_MODEL" ] && args+=(-m "$RESOLVED_MODEL")
+      timeout "${CREATIVE_TIMEOUT:-40m}" gemini "${args[@]}" 2>&1
+      ;;
+    opencode)
+      local args=(run --format json --auto --archived)
+      [ -n "$RESOLVED_MODEL" ] && args+=(--model "$RESOLVED_MODEL")
+      args+=("$TASK")
+      timeout "${CREATIVE_TIMEOUT:-40m}" opencode "${args[@]}" 2>&1
+      ;;
+    *)
+      local args=("$SCRIPTS_DIR/agent.$SCRIPT_EXT" --provider "$PROVIDER_ID" --skill "$SKILL" --task "$TASK")
+      [ -n "$RESOLVED_MODEL" ] && args+=(--model "$RESOLVED_MODEL")
+      timeout "${CREATIVE_TIMEOUT:-40m}" node "${args[@]}" 2>&1
+      ;;
+  esac
+}
+
+if [ "$PROVIDER_ID" = "claude" ]; then
+  [ -z "${ANTHROPIC_API_KEY:-}" ] && unset ANTHROPIC_API_KEY
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    T="$CLAUDE_CODE_OAUTH_TOKEN"
+    echo "CLAUDE_CODE_OAUTH_TOKEN: ${#T} chars, prefix ok: $([[ "$T" == sk-ant-oat* ]] && echo yes || echo NO), whitespace: $([[ "$T" =~ [[:space:]] ]] && echo YES || echo no)"
+  fi
+  if ! timeout 120 claude -p "Reply with the word ok." --model haiku > "$RUNNER_TEMP/auth.txt" 2>&1; then
+    echo "::error::Claude sign-in failed. Re-create the token with 'claude setup-token' and set ONLY the sk-ant-oat01-... line as CLAUDE_CODE_OAUTH_TOKEN."
+    tail -5 "$RUNNER_TEMP/auth.txt"; exit 1
+  fi
+  echo "  ✓ Preflight   Claude Code signed in"
+elif [ "$PROVIDER_KIND" = "cli" ]; then
+  BIN_NAME=$([ "$PROVIDER_ID" = "gemini-cli" ] && echo "gemini" || echo "$PROVIDER_ID")
+  command -v "$BIN_NAME" >/dev/null 2>&1 || { echo "::error::$PROVIDER_LABEL ($BIN_NAME) is not installed."; exit 1; }
+  echo "  ✓ Preflight   $PROVIDER_LABEL ready"
+else
+  echo "  ✓ Preflight   $PROVIDER_LABEL ready (built-in multimodal agent)"
 fi
-if ! timeout 120 claude -p "Reply with the word ok." --model haiku > "$RUNNER_TEMP/auth.txt" 2>&1; then
-  echo "::error::Claude sign-in failed. Re-create the token with 'claude setup-token' and set ONLY the sk-ant-oat01-... line as CLAUDE_CODE_OAUTH_TOKEN."
-  tail -5 "$RUNNER_TEMP/auth.txt"; exit 1
-fi
-echo "  ✓ Preflight   Claude Code signed in"
+
 echo ""
 echo "  ▶ Directing & rendering film…"
 # Stream live progress to the terminal while recording timed JSONL to agent.log for CI.
-timeout "${CREATIVE_TIMEOUT:-40m}" claude -p "$TASK" \
-  --model "${CREATIVE_MODEL:-sonnet}" --dangerously-skip-permissions --add-dir "$SKILL" \
-  --output-format stream-json --verbose 2>&1 \
-  | node "$SCRIPTS_DIR/stream-progress.$SCRIPT_EXT" "$RUNNER_TEMP/agent.log" || {
+run_director_agent | node "$SCRIPTS_DIR/stream-progress.$SCRIPT_EXT" "$RUNNER_TEMP/agent.log" || {
   echo "creative agent failed (exit $?); last lines:"; tail -c 3000 "$RUNNER_TEMP/agent.log"; exit 1; }
 
 # The contract CI relies on.

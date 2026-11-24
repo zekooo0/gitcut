@@ -43,6 +43,12 @@ on:
       style:
         description: "Optional visual direction: auto | brand-native | editorial-light | soft-studio | kinetic-bold | terminal-brutalist | dark-glow"
         required: false
+      provider:
+        description: "Optional AI provider: auto | claude | codex | gemini-cli | opencode | anthropic | openai | gemini | openrouter | deepseek | xai | groq | mistral"
+        required: false
+      model:
+        description: "Optional AI model override"
+        required: false
       captions:
         description: "Optional burned-in captions toggle: on | off"
         required: false
@@ -72,6 +78,13 @@ jobs:
       DEMO_PASSWORD: ${{ secrets.DEMO_PASSWORD }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      AI_PROVIDER: ${{ inputs.provider || vars.AI_PROVIDER || 'auto' }}
       BRIEF_MODEL: ${{ vars.BRIEF_MODEL }}
       CLICKUP_TOKEN: ${{ secrets.CLICKUP_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -153,9 +166,21 @@ jobs:
             echo "::warning::apt mirrors unreachable; installing Chromium without system deps"
             npx playwright install chromium; }
 
-      - name: Claude Code CLI
+      - name: AI CLI (when using a CLI provider)
         if: inputs.mode != 'render'
-        run: command -v claude >/dev/null || npm install -g --no-audit --no-fund @anthropic-ai/claude-code >/dev/null
+        env:
+          REQ_PROVIDER: ${{ inputs.provider || vars.AI_PROVIDER || 'auto' }}
+          HAS_CLAUDE_OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "$REQ_PROVIDER" = "claude" ] || { [ "$REQ_PROVIDER" = "auto" ] && [ "$HAS_CLAUDE_OAUTH" = "true" ]; }; then
+            command -v claude >/dev/null || npm install -g --no-audit --no-fund @anthropic-ai/claude-code >/dev/null
+          elif [ "$REQ_PROVIDER" = "codex" ]; then
+            command -v codex >/dev/null || npm install -g --no-audit --no-fund @openai/codex >/dev/null
+          elif [ "$REQ_PROVIDER" = "gemini-cli" ]; then
+            command -v gemini >/dev/null || npm install -g --no-audit --no-fund @google/gemini-cli >/dev/null
+          elif [ "$REQ_PROVIDER" = "opencode" ]; then
+            command -v opencode >/dev/null || npm install -g --no-audit --no-fund opencode-ai >/dev/null
+          fi
 
       - name: Plan (LLM brief)
         if: inputs.mode == 'plan'
@@ -205,19 +230,18 @@ jobs:
           done
           cat "$RUNNER_TEMP/eleven.log"; exit 1
 
-      - name: Creative film (Claude Code + video-shotcraft)
+      - name: Creative film (AI Director + video-shotcraft)
         if: inputs.mode != 'render'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          CREATIVE_MODEL: ${{ vars.CREATIVE_MODEL || 'sonnet' }}
+          AI_PROVIDER: ${{ inputs.provider || vars.AI_PROVIDER || 'auto' }}
+          CREATIVE_MODEL: ${{ inputs.model || vars.CREATIVE_MODEL || '' }}
           AUDIO_MODE: ${{ steps.eleven.outputs.audio_mode || 'silent' }}
           VIDEO_FORMAT: ${{ inputs.format }}
           VIDEO_STYLE: ${{ inputs.style }}
           CAPTIONS_MODE: ${{ inputs.captions }}
-          # the agent runs with every permission: give it no other secret
-          ANTHROPIC_API_KEY: ""
-          OPENAI_API_KEY: ""
+          # keep app/login/clickup secrets out of the creative agent environment
           DEMO_EMAIL: ""
           DEMO_PASSWORD: ""
           CLICKUP_TOKEN: ""
