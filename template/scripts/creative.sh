@@ -34,31 +34,41 @@ if [ -f "$D/repo.json" ] && [ ! -f "$D/capture.json" ]; then
   REPO_MODE=1
 fi
 
-# Read brand/product/format metadata from repo.json (repo mode) or site config (UI mode).
-SITE_META=$(SCRIPTS_DIR="$SCRIPTS_DIR" SCRIPT_EXT="$SCRIPT_EXT" REPO_MODE="$REPO_MODE" VIDEO_FORMAT="${VIDEO_FORMAT:-}" CAPTIONS_MODE="${CAPTIONS_MODE:-}" node --input-type=module -e '
+# Read brand/product/format/style metadata from repo.json (repo mode) or site config (UI mode).
+SITE_META=$(SCRIPTS_DIR="$SCRIPTS_DIR" SCRIPT_EXT="$SCRIPT_EXT" REPO_MODE="$REPO_MODE" VIDEO_FORMAT="${VIDEO_FORMAT:-}" VIDEO_STYLE="${VIDEO_STYLE:-}" CAPTIONS_MODE="${CAPTIONS_MODE:-}" node --input-type=module -e '
   import fs from "node:fs";
   import path from "node:path";
   import { pathToFileURL } from "node:url";
   const { loadSiteForDir } = await import(pathToFileURL(path.join(process.env.SCRIPTS_DIR, `lib/site.${process.env.SCRIPT_EXT}`)).href);
   const { resolveFormat } = await import(pathToFileURL(path.join(process.env.SCRIPTS_DIR, `lib/format.${process.env.SCRIPT_EXT}`)).href);
+  const { resolveStyle } = await import(pathToFileURL(path.join(process.env.SCRIPTS_DIR, `lib/style.${process.env.SCRIPT_EXT}`)).href);
   const dir = process.argv[1];
   const isRepo = process.env.REPO_MODE === "1";
   const s = isRepo
     ? JSON.parse(fs.readFileSync(path.join(dir, "repo.json"), "utf8"))
     : (loadSiteForDir(dir) ?? {});
+  const themePath = path.join(dir, "theme.json");
+  const theme = fs.existsSync(themePath) ? JSON.parse(fs.readFileSync(themePath, "utf8")) : null;
   const defaultFmt = isRepo ? "vertical" : (s.format || "landscape");
   const fmt = resolveFormat(process.env.VIDEO_FORMAT || defaultFmt);
+  const styleSpec = resolveStyle(process.env.VIDEO_STYLE || s.style || "auto", {
+    theme,
+    seed: s.fullName || s.name || s.product?.name || path.basename(dir),
+    accentOverride: s.brand?.accent || undefined,
+  });
   const capEnv = (process.env.CAPTIONS_MODE || "").trim().toLowerCase();
   const captions = capEnv ? ["on", "true", "1", "yes"].includes(capEnv) : Boolean(s.captions);
   console.log(JSON.stringify({
     logo: s.brand?.logo ?? "",
-    accent: s.brand?.accent ?? "#2563EB",
+    accent: styleSpec.palette.accent,
     audience: isRepo ? "developers" : (s.product?.audience ?? "users"),
     format: fmt.name,
     width: fmt.width,
     height: fmt.height,
     ratio: fmt.ratio,
     formatGuidance: fmt.guidance,
+    styleName: styleSpec.name,
+    styleLabel: styleSpec.label,
     captions,
   }));
 ' "$D")
@@ -69,6 +79,8 @@ FMT_NAME=$(jq -r .format <<<"$SITE_META")
 FMT_WIDTH=$(jq -r .width <<<"$SITE_META")
 FMT_HEIGHT=$(jq -r .height <<<"$SITE_META")
 FMT_GUIDANCE=$(jq -r .formatGuidance <<<"$SITE_META")
+STYLE_NAME=$(jq -r .styleName <<<"$SITE_META")
+STYLE_LABEL=$(jq -r .styleLabel <<<"$SITE_META")
 CAPTIONS_ON=$(jq -r .captions <<<"$SITE_META")
 
 # Resolve audio mode: auto uses ElevenLabs if the local proxy is up, otherwise silent/captioned mode.
@@ -92,6 +104,7 @@ MODE_LABEL=$([ "$REPO_MODE" = "1" ] && echo "Repo Reel" || echo "Feature Video")
 echo ""
 echo "🎬 GitCut · $MODE_LABEL"
 echo "   Canvas   $FMT_NAME (${FMT_WIDTH}x${FMT_HEIGHT}) · captions $([ "$CAPTIONS_ON" = "true" ] && echo on || echo off)"
+echo "   Style    $STYLE_LABEL ($STYLE_NAME)"
 echo "   Audio    $([ "$AUDIO_MODE" = "elevenlabs" ] && echo "ElevenLabs (voice-over, music & SFX)" || echo "silent / captioned mode")"
 echo "   Model    ${CREATIVE_MODEL:-sonnet}"
 echo "   Output   $D"
@@ -145,6 +158,7 @@ else
   # only this plan's shots (the branch may still hold captures of an older plan)
   for n in $(jq -r '.shots[].name' "$D/capture.json"); do cp "$D/captures/$n.png" "$C/input/captures/"; done
   cp "$D"/{capture,positions,layout}.json "$C/input/"
+  [ -f "$D/theme.json" ] && cp "$D/theme.json" "$C/input/theme.json" || true
   if [ -n "$PR" ]; then
     [[ "$PR" =~ ^([^/]+/[^#]+)#([0-9]+)$ ]]
     for i in 1 2 3 4; do  # GitHub has short 5xx outages: retry
@@ -172,17 +186,26 @@ else
     TEMPLATE="$HERE/../creative/BRIEF.md"
   fi
   BRIEF_FILE=BRIEF.md
-  TASK="Read ./BRIEF.md and carry it out completely, end to end, without asking questions. Finish only when ./out/video.mp4 exists, ./film/package.json has the render script, and ./NOTES.md is written."
+  TASK="Read ./BRIEF.md and carry it out completely, end to end, without asking questions. FIRST analyze the website/repo inputs and write ./STRATEGY.md, THEN build ./film strictly following your strategy. Finish only when ./STRATEGY.md, ./out/video.mp4, ./film/package.json (with render script), ./NOTES.md, and ./captions.json all exist."
 fi
 
 # Render the brief template safely with Node (avoids sed escaping bugs on &, \, |, or quotes).
 TITLE="$TITLE" SKILL="$SKILL" LOGO="$LOGO" ACCENT="$ACCENT" AUDIENCE="$AUDIENCE" \
 ELEVEN_CMD="node $SCRIPTS_DIR/eleven.$SCRIPT_EXT" AUDIO_MODE="$AUDIO_MODE" \
 FMT_WIDTH="$FMT_WIDTH" FMT_HEIGHT="$FMT_HEIGHT" FMT_GUIDANCE="$FMT_GUIDANCE" CAPTIONS_ON="$CAPTIONS_ON" \
+SCRIPTS_DIR="$SCRIPTS_DIR" SCRIPT_EXT="$SCRIPT_EXT" STYLE_NAME="$STYLE_NAME" FEATURE_DIR="$D" \
 node --input-type=module -e '
   import fs from "node:fs";
   import path from "node:path";
-  const { TITLE, SKILL, LOGO, ACCENT, AUDIENCE, ELEVEN_CMD, AUDIO_MODE, FMT_WIDTH, FMT_HEIGHT, FMT_GUIDANCE, CAPTIONS_ON } = process.env;
+  import { pathToFileURL } from "node:url";
+  const { resolveStyle, renderStyleBriefSection } = await import(
+    pathToFileURL(path.join(process.env.SCRIPTS_DIR, `lib/style.${process.env.SCRIPT_EXT}`)).href
+  );
+  const { TITLE, SKILL, LOGO, ACCENT, AUDIENCE, ELEVEN_CMD, AUDIO_MODE, FMT_WIDTH, FMT_HEIGHT, FMT_GUIDANCE, CAPTIONS_ON, STYLE_NAME, FEATURE_DIR } = process.env;
+  const themePath = path.join(FEATURE_DIR, "theme.json");
+  const theme = fs.existsSync(themePath) ? JSON.parse(fs.readFileSync(themePath, "utf8")) : null;
+  const styleSpec = resolveStyle(STYLE_NAME, { theme, accentOverride: ACCENT });
+  const visualDirectionSection = renderStyleBriefSection(styleSpec, theme);
   const logoBase = LOGO ? path.basename(LOGO) : "";
   const brandNote = logoBase
     ? `the product logos (${logoBase} is the configured logo).`
@@ -256,6 +279,7 @@ already in film/public untouched).`;
     ACCENT,
     AUDIENCE,
     BRAND_NOTE: brandNote,
+    VISUAL_DIRECTION_SECTION: visualDirectionSection,
     FORMAT_SECTION: formatSection,
     CAPTIONS_SECTION: captionsSection,
     SOUND_SECTION: AUDIO_MODE === "elevenlabs" ? soundEleven : soundSilent,
@@ -387,5 +411,6 @@ fi
 echo ""
 echo "🎉 Done! ($(printf '%.1f' "$DUR") s)"
 echo "   Video:      $(pwd)/out/video.mp4"
+[ -f "$(pwd)/STRATEGY.md" ] && echo "   Strategy:   $(pwd)/STRATEGY.md"
 [ -f "$(pwd)/sheet.png" ] && echo "   Contact:    $(pwd)/sheet.png"
 [ -f "$(pwd)/out/captions.srt" ] && echo "   Subtitles:  $(pwd)/out/captions.srt"

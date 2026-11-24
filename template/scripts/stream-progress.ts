@@ -71,6 +71,9 @@ export function describeToolUse(name: string, input: Record<string, unknown> = {
     if (/shotcraft|SHOTS\.md|shots\.md/.test(cmd)) {
       return { icon: "🎬", label: "Studying video-shotcraft shot cards", group: "read-skill" };
     }
+    if (/(?:cat|tee)\s+>{1,2}\s*[^\n]*(STRATEGY\.md)/.test(cmd)) {
+      return { icon: "🧠", label: "Crafting creative strategy (STRATEGY.md)", group: "strategy" };
+    }
     if (/(?:cat|tee)\s+>{1,2}\s*[^\n]*(NOTES\.md|CHANGES\.md|captions\.json)/.test(cmd)) {
       return { icon: "📝", label: "Writing notes & subtitle timings", group: "notes" };
     }
@@ -90,6 +93,7 @@ export function describeToolUse(name: string, input: Record<string, unknown> = {
 
   if (name === "Write" || name === "Edit" || name === "MultiEdit") {
     const p = shortPath(input.file_path ?? input.path);
+    if (p.endsWith("STRATEGY.md")) return { icon: "🧠", label: "Crafting creative strategy (STRATEGY.md)" };
     if (p.endsWith("NOTES.md")) return { icon: "📝", label: "Writing NOTES.md" };
     if (p.endsWith("CHANGES.md")) return { icon: "📝", label: "Writing CHANGES.md" };
     if (p.endsWith("captions.json")) return { icon: "💬", label: "Writing captions.json" };
@@ -101,7 +105,7 @@ export function describeToolUse(name: string, input: Record<string, unknown> = {
     if (/shotcraft|SHOTS\.md|shots\.md/i.test(String(input.file_path ?? input.path ?? ""))) {
       return { icon: "🎬", label: "Studying video-shotcraft shot cards", group: "read-skill" };
     }
-    if (/BRIEF\.md|EDIT\.md|facts\.md|readme\.md|pr\.md|repo\.json/i.test(p)) {
+    if (/BRIEF\.md|EDIT\.md|facts\.md|readme\.md|pr\.md|repo\.json|theme\.json/i.test(p)) {
       return { icon: "📖", label: `Reading ${basename(p)}`, group: "read-brief" };
     }
     return { icon: "📖", label: p ? `Reading ${p}` : "Exploring inputs", group: "read" };

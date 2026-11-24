@@ -15,9 +15,11 @@ into short, AI-directed Remotion videos.
   snappy 15–30 s vertical, square, or widescreen showcase reel straight from `README.md`, repo
   metadata, and real README screenshots.
 
-There is **no rigid template and no fixed house style**: every film is designed from scratch around
-your product's real UI or repo, logo, and accent colour, with optional ElevenLabs voice-over, music,
-and SFX—or crisp silent/captioned output.
+There is **no rigid template and no fixed house style**: GitCut extracts your live website's real
+CSS palette and fonts (`theme.json`), writes an explicit creative **strategy (`STRATEGY.md`)** from
+your product or repo before touching code, and supports distinct visual direction presets (`--style`)
+so every video looks native to its product—with optional ElevenLabs voice-over, music, and SFX or
+crisp silent/captioned output.
 
 ## Ways to use it
 
@@ -91,6 +93,7 @@ npx gitcut-cli render .gitcut/dark-mode-toggle --out ./dark-mode.mp4
 | `/gitcut plan routes=/settings/profile` | Same, targeting specific app routes (skips the AI route pass). |
 | `/gitcut plan url=https://pr-42.vercel.app` | Capture a specific preview/staging URL instead of the site's default `baseUrl`. |
 | `/gitcut plan format=square` (or `vertical`, `1:1`, `9:16`) | Set the canvas aspect ratio (`landscape` 1920×1080 default, `square` 1080×1080, `vertical` 1080×1920). |
+| `/gitcut plan style=editorial-light` | Pick a visual direction preset: `auto` (matches live CSS), `brand-native`, `editorial-light`, `soft-studio`, `kinetic-bold`, `terminal-brutalist`, or `dark-glow`. |
 | `/gitcut plan captions=on` | Burn synced subtitles into the video (and export `.srt` + `.vtt` release assets). |
 | `/gitcut plan site=<name>` | Use a named site config (`template/sites/<name>.json`). |
 | `/gitcut plan clickup=<taskId>` | Link a specific ClickUp task (otherwise parsed from PR body/branch). |
@@ -149,6 +152,7 @@ Place `.gitcut.json` at the root of your repository (or add `template/sites/<nam
 ## Subtitles, formats & integrations
 
 - **Aspect ratio presets**: `landscape` (`16:9`, 1920×1080), `square` (`1:1`, 1080×1080 for LinkedIn/X), and `vertical` (`9:16`, 1080×1920 for Shorts/Reels/TikTok).
+- **Strategy-first direction & visual styles (`--style` / `style=`)**: Before writing any Remotion code, GitCut analyzes your website (including live computed CSS colors, light/dark mode, and fonts saved to `theme.json`) or repository and writes `STRATEGY.md` (audience, hook, story angle, visual grammar, shot plan). Choose `auto` (default: matches the live site's CSS or rotates distinct styles across repos), `brand-native`, `editorial-light`, `soft-studio`, `kinetic-bold`, `terminal-brutalist`, or `dark-glow`.
 - **Subtitles & burned-in captions**: Every film exports `.srt` and `.vtt` tracks automatically (attached to the GitHub Release alongside the MP4), and `captions=on` / `--captions` burns synced captions into the video.
 - **Audio modes**: With `ELEVENLABS_API_KEY` set, an isolated local proxy ([template/scripts/eleven.ts](template/scripts/eleven.ts)) reads the key on `stdin` only with per-run caps (3000 TTS chars, 3 music tracks / 150 s, 25 SFX; override voice with `ELEVEN_VOICE_ID`). Without it, runs automatically in **silent/captioned mode**.
 - **YouTube upload (after `/gitcut approve`)**: Set `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, and `YOUTUBE_REFRESH_TOKEN` (via `node template/scripts/youtube-auth.ts`), plus optional `YOUTUBE_PRIVACY` (`private` default, `unlisted`, or `public`).

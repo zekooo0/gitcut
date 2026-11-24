@@ -40,6 +40,9 @@ on:
       format:
         description: "Optional canvas format: landscape (16:9), square (1:1), or vertical (9:16)"
         required: false
+      style:
+        description: "Optional visual direction: auto | brand-native | editorial-light | soft-studio | kinetic-bold | terminal-brutalist | dark-glow"
+        required: false
       captions:
         description: "Optional burned-in captions toggle: on | off"
         required: false
@@ -210,6 +213,7 @@ jobs:
           CREATIVE_MODEL: ${{ vars.CREATIVE_MODEL || 'sonnet' }}
           AUDIO_MODE: ${{ steps.eleven.outputs.audio_mode || 'silent' }}
           VIDEO_FORMAT: ${{ inputs.format }}
+          VIDEO_STYLE: ${{ inputs.style }}
           CAPTIONS_MODE: ${{ inputs.captions }}
           # the agent runs with every permission: give it no other secret
           ANTHROPIC_API_KEY: ""

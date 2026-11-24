@@ -18,6 +18,11 @@ on:
         type: choice
         options: [vertical, square, landscape]
         default: vertical
+      style:
+        description: "Visual direction preset"
+        type: choice
+        options: [auto, editorial-light, soft-studio, kinetic-bold, terminal-brutalist, dark-glow]
+        default: auto
       captions:
         description: "Burn synced subtitles into the video"
         type: choice
@@ -41,6 +46,10 @@ on:
         description: "vertical (9:16) | square (1:1) | landscape (16:9)"
         type: string
         default: vertical
+      style:
+        description: "Visual direction preset: auto | editorial-light | soft-studio | kinetic-bold | terminal-brutalist | dark-glow"
+        type: string
+        default: auto
       captions:
         description: "on | off"
         type: string
@@ -83,6 +92,7 @@ jobs:
       TARGET_REF: ${{ inputs.ref }}
       TARGET_ACCENT: ${{ inputs.accent }}
       VIDEO_FORMAT: ${{ inputs.format || 'vertical' }}
+      VIDEO_STYLE: ${{ inputs.style || 'auto' }}
       CAPTIONS_MODE: ${{ inputs.captions || 'on' }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:

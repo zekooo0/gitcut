@@ -52,6 +52,10 @@ on:
         description: "Optional canvas format: landscape (16:9), square (1:1), or vertical (9:16)"
         type: string
         default: ""
+      style:
+        description: "Optional visual direction: auto | brand-native | editorial-light | soft-studio | kinetic-bold | terminal-brutalist | dark-glow"
+        type: string
+        default: ""
       captions:
         description: "Optional burned-in captions toggle: on | off"
         type: string
@@ -168,6 +172,7 @@ jobs:
           DIRECT_SITE: ${{ inputs.site }}
           DIRECT_URL: ${{ inputs.url }}
           DIRECT_FORMAT: ${{ inputs.format }}
+          DIRECT_STYLE: ${{ inputs.style }}
           DIRECT_CAPTIONS: ${{ inputs.captions }}
           DIRECT_CLICKUP: ${{ inputs.clickup }}
           DIRECT_REQUEST: ${{ inputs.request }}
@@ -179,6 +184,7 @@ jobs:
             echo "site=$DIRECT_SITE" >> "$GITHUB_OUTPUT"
             echo "url=$DIRECT_URL" >> "$GITHUB_OUTPUT"
             echo "format=$DIRECT_FORMAT" >> "$GITHUB_OUTPUT"
+            echo "style=$DIRECT_STYLE" >> "$GITHUB_OUTPUT"
             echo "captions=$DIRECT_CAPTIONS" >> "$GITHUB_OUTPUT"
             echo "clickup=$DIRECT_CLICKUP" >> "$GITHUB_OUTPUT"
             if [ -n "$DIRECT_REQUEST" ]; then
@@ -343,6 +349,7 @@ jobs:
           CREATIVE_MODEL: ${{ inputs.creative_model }}
           AUDIO_MODE: ${{ steps.eleven.outputs.audio_mode || 'silent' }}
           VIDEO_FORMAT: ${{ steps.cmd.outputs.format }}
+          VIDEO_STYLE: ${{ steps.cmd.outputs.style }}
           CAPTIONS_MODE: ${{ steps.cmd.outputs.captions }}
           EDIT_REQUEST: ${{ steps.cmd.outputs.mode == 'edit' && steps.cmd.outputs.request || '' }}
           ANTHROPIC_API_KEY: ""

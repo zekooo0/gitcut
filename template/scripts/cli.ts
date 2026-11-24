@@ -6,12 +6,12 @@
  *   gitcut doctor            Check local prerequisites (Node, Claude Code, jq, ffmpeg, gh)
  *   gitcut setup-github      Generate .gitcut.json + .github/workflows/gitcut.yml for your repo
  *   gitcut init              Scaffold .gitcut.json only
- *   gitcut repo              <owner/repo | github-url | local-dir> [--format vertical|square|landscape] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
- *   gitcut create            (--pr owner/repo#123 | --url <url> --brief <text> [--brief-file <md>])
- *                            [--title <title>] [--routes /a,/b] [--site <name|path>] [--format <preset>] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
+ *   gitcut repo              <owner/repo | github-url | local-dir> [--format vertical|square|landscape] [--style <preset>] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
+ *   gitcut create            (--pr owner/repo#123 | --url <url> [--brief <text>] [--brief-file <md>])
+ *                            [--title <title>] [--routes /a,/b] [--site <name|path>] [--format <preset>] [--style <preset>] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
  *   gitcut plan              ...same planning options as create...
  *   gitcut capture           <dir>
- *   gitcut film              <dir> [--pr owner/repo#123] [--format <preset>] [--captions] [--audio auto|elevenlabs|silent]
+ *   gitcut film              <dir> [--pr owner/repo#123] [--format <preset>] [--style <preset>] [--captions] [--audio auto|elevenlabs|silent]
  *   gitcut edit              <dir> <request...> [--pr owner/repo#123] [--audio auto|elevenlabs|silent]
  *   gitcut render            <dir> [--out <video.mp4>]
  *   gitcut subtitles         <dir>
@@ -43,11 +43,11 @@ Usage:
   gitcut doctor            Check local prerequisites (Node 24+, Claude Code, jq, ffmpeg, gh)
   gitcut setup-github      Add .gitcut.json + .github/workflows/gitcut.yml to your repo
   gitcut init              [--url <url>] [--auto-preview] [--name <product>] [--website <url>] [--accent <#hex>] [--out .gitcut.json] [--force]
-  gitcut repo              <owner/repo | github-url | local-dir> [--format vertical|square|landscape|9:16|1:1|16:9] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
-  gitcut create            [--pr owner/repo#123 | --brief <text> | --brief-file <md>] [--url <url>] [--auto-preview] [--title <title>] [--routes /a,/b] [--site <name|path>] [--format landscape|square|vertical|16:9|1:1|9:16] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
+  gitcut repo              <owner/repo | github-url | local-dir> [--format vertical|square|landscape|9:16|1:1|16:9] [--style <preset>] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
+  gitcut create            [--pr owner/repo#123 | --brief <text> | --brief-file <md>] [--url <url>] [--auto-preview] [--title <title>] [--routes /a,/b] [--site <name|path>] [--format landscape|square|vertical|16:9|1:1|9:16] [--style <preset>] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
   gitcut plan              ...same planning options as create (stops after capture.json + BRIEF.md)...
   gitcut capture           <dir>
-  gitcut film              <dir> [--pr owner/repo#123] [--format <preset>] [--captions] [--audio auto|elevenlabs|silent]
+  gitcut film              <dir> [--pr owner/repo#123] [--format <preset>] [--style <preset>] [--captions] [--audio auto|elevenlabs|silent]
   gitcut edit              <dir> <request...> [--pr owner/repo#123] [--audio auto|elevenlabs|silent]
   gitcut render            <dir> [--out <file.mp4>]
   gitcut subtitles         <dir>
@@ -76,6 +76,11 @@ Examples:
   # 4. Edit the film in plain English and render the final MP4
   gitcut edit public/features/dark-mode-toggle "shorter intro, brighter highlight"
   gitcut render public/features/dark-mode-toggle --out ./dark-mode.mp4
+
+Visual styles (--style):
+  auto (default: matches the live site's real CSS theme, or picks a distinct look per repo),
+  brand-native, editorial-light, soft-studio, kinetic-bold, terminal-brutalist, dark-glow.
+  Before writing Remotion code, the AI reads your site/repo and writes STRATEGY.md first.
 
 Audio:
   Set ELEVENLABS_API_KEY to automatically start the isolated local ElevenLabs proxy (voice-over,
@@ -256,7 +261,7 @@ function resolveFeatureDir(args: {
 
 async function runCreative(
   dir: string,
-  opts: { pr?: string; audio: string; format?: string; captions?: boolean; editRequest?: string },
+  opts: { pr?: string; audio: string; format?: string; style?: string; captions?: boolean; editRequest?: string },
 ) {
   const absDir = resolve(dir);
   const runTemp = process.env.RUNNER_TEMP || mkdtempSync(join(tmpdir(), "gitcut-run-"));
@@ -270,6 +275,7 @@ async function runCreative(
     };
     delete env.ELEVENLABS_API_KEY;
     if (opts.format) env.VIDEO_FORMAT = opts.format;
+    if (opts.style) env.VIDEO_STYLE = opts.style;
     if (opts.captions !== undefined) env.CAPTIONS_MODE = opts.captions ? "on" : "off";
     if (opts.editRequest) env.EDIT_REQUEST = opts.editRequest;
     const args = [join(TEMPLATE_DIR, "scripts/creative.sh"), absDir];
@@ -373,6 +379,14 @@ async function runWizard() {
       ],
       choice === "repo" ? 0 : 2,
     );
+    const style = await selectPrompt("Choose visual direction", [
+      { value: "auto", label: "Auto (recommended)", hint: choice === "live" ? "Match live website colors & fonts" : "Pick a distinct editorial/studio/kinetic look" },
+      { value: "editorial-light", label: "Editorial Light", hint: "Warm paper canvas, serif headlines, Swiss grid" },
+      { value: "soft-studio", label: "Soft Studio", hint: "Airy white Apple-keynote canvas, floating cards" },
+      { value: "kinetic-bold", label: "Kinetic Bold", hint: "Full-bleed color-block flips, high-energy cuts" },
+      { value: "terminal-brutalist", label: "Terminal Brutalist", hint: "Stark monochrome, sharp borders, monospace" },
+      { value: "dark-glow", label: "Dark Glow", hint: "Sleek obsidian dark stage with ambient glow" },
+    ]);
     const captions = await confirmPrompt("Burn synced captions into the video?", true);
     const audio = process.env.ELEVENLABS_API_KEY
       ? await selectPrompt("Audio mode", [
@@ -397,6 +411,7 @@ async function runWizard() {
           ["Mode", "Repo / README Reel"],
           ["Repository", target],
           ["Format", format],
+          ["Style", style],
           ["Captions", captions ? "burned-in + .srt/.vtt" : ".srt/.vtt only"],
           ["Audio", audio === "elevenlabs" ? "ElevenLabs (voice + music + SFX)" : "Silent / captioned"],
           ["Output", outDir],
@@ -404,7 +419,7 @@ async function runWizard() {
       );
       if (!(await confirmPrompt("Generate this reel now?", true))) return;
       runSync("node", [scriptPath("repo-brief"), target, "--out", outDir], { cwd: process.cwd() });
-      await runCreative(outDir, { audio, format, captions });
+      await runCreative(outDir, { audio, format, style, captions });
       return;
     }
 
@@ -437,6 +452,7 @@ async function runWizard() {
         ["Brief", brief || "Auto-explore live site"],
         ["Routes", routes || "AI auto-discovery"],
         ["Format", format],
+        ["Style", style],
         ["Captions", captions ? "burned-in + .srt/.vtt" : ".srt/.vtt only"],
         ["Audio", audio === "elevenlabs" ? "ElevenLabs (voice + music + SFX)" : "Silent / captioned"],
         ["Output", outDir],
@@ -449,7 +465,7 @@ async function runWizard() {
     if (routes) briefArgs.push("--routes", routes);
     runSync("node", briefArgs, { cwd: process.cwd() });
     runSync("node", [scriptPath("capture"), outDir]);
-    await runCreative(outDir, { audio, format, captions });
+    await runCreative(outDir, { audio, format, style, captions });
   } catch (err) {
     if ((err as Error).message === "CANCELLED") return;
     throw err;
@@ -576,6 +592,7 @@ async function main() {
         ref: { type: "string" },
         accent: { type: "string" },
         format: { type: "string", default: "vertical" },
+        style: { type: "string", default: "auto" },
         captions: { type: "boolean", default: false },
         "plan-only": { type: "boolean", default: false },
         audio: { type: "string", default: "auto" },
@@ -598,6 +615,7 @@ async function main() {
     await runCreative(outDir, {
       audio: values.audio!,
       format: values.format,
+      style: values.style,
       captions: values.captions || undefined,
     });
     return;
@@ -621,6 +639,7 @@ async function main() {
         "auto-preview": { type: "boolean", default: false },
         response: { type: "string" },
         format: { type: "string" },
+        style: { type: "string" },
         captions: { type: "boolean", default: false },
         audio: { type: "string", default: "auto" },
       },
@@ -653,9 +672,9 @@ async function main() {
       pr: values.pr,
       audio: values.audio!,
       format: values.format,
+      style: values.style,
       captions: values.captions || undefined,
     });
-    console.log(`\nPreview video ready: ${join(outDir, "creative/out/video.mp4")}`);
     return;
   }
 
@@ -676,19 +695,21 @@ async function main() {
       options: {
         pr: { type: "string" },
         format: { type: "string" },
+        style: { type: "string" },
         captions: { type: "boolean", default: false },
         audio: { type: "string", default: "auto" },
       },
     });
     const dir = positionals[0];
     if (!dir) {
-      console.error("usage: gitcut film <dir> [--pr owner/repo#123] [--format landscape|square|vertical] [--captions] [--audio auto|elevenlabs|silent]");
+      console.error("usage: gitcut film <dir> [--pr owner/repo#123] [--format landscape|square|vertical] [--style auto|editorial-light|soft-studio|kinetic-bold|terminal-brutalist|dark-glow] [--captions] [--audio auto|elevenlabs|silent]");
       process.exit(2);
     }
     await runCreative(dir, {
       pr: values.pr,
       audio: values.audio!,
       format: values.format,
+      style: values.style,
       captions: values.captions || undefined,
     });
     return;

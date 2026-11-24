@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FormatName } from "./format.ts";
+import type { StyleName } from "./style.ts";
 
 export type ProductInfo = {
   /** Product name used in prompts and video titles (e.g. "Acme App"). */
@@ -23,6 +24,8 @@ export type Site = {
   autoPreview?: boolean;
   /** Default canvas format: landscape (16:9), square (1:1), or vertical (9:16). */
   format?: FormatName;
+  /** Visual direction preset: auto, brand-native, editorial-light, soft-studio, kinetic-bold, terminal-brutalist, dark-glow. */
+  style?: StyleName;
   /** Burn synced subtitles into voice-over films by default. */
   captions?: boolean;
   viewport?: { width: number; height: number; dpr?: number };

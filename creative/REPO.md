@@ -1,19 +1,30 @@
 # Brief: a repository showcase reel for "{{TITLE}}"
 
-You are the director. There is **no template, no reference film and no house style**: invent
-this film from scratch for this repository. Make it snappy, high-impact, and worthy of the top
-of a GitHub README or a social developer feed (target **15 to 30 seconds**).
+You are the creative director. Make a snappy, unmistakable **15 to 30 second** showcase film
+tailored to THIS repository's exact personality — never recycle a generic dark-blue SaaS look.
 
 Use the video-shotcraft skill at {{SKILL}} (read-only). Mode: **autonomous free creation**
 (自主自由创作). Read its SKILL.md, then references/pipeline.md fully, and follow it end to end
 WITHOUT stopping for confirmation. Skip the workbench steps and the Ink Press template.
 
+## Step 1 (REQUIRED before writing any code): Repo analysis & ./STRATEGY.md
+Read `./input/repo.json`, `./input/facts.md`, `./input/readme.md`, and inspect `./input/assets/` (if any).
+Before creating any Remotion code, write `./STRATEGY.md` with:
+1. **Developer Hook & Audience:** Who is this repo for and what makes a developer stop scrolling in the first 2 seconds?
+2. **Narrative Strategy (pick ONE clear angle):**
+   - e.g. *One-Line Magic* (show the jaw-dropping single command + outcome), *Problem → Tool* (pain point snapped away), *Architecture / Speed Proof*, or *Visual Demo Reel* (led by real README screenshots).
+3. **Visual System:** Exact background, surface, ink, accent colors, font pairing, and motion feel — obeying the visual direction below.
+4. **Shot Plan:** Which 3–5 shot cards from `./input/shots.md` fit this exact strategy and why.
+
+Then build `./film/` strictly from `./STRATEGY.md`.
+
+{{VISUAL_DIRECTION_SECTION}}
+
 ## Shot cards: pick 3 to 5 from ./input/shots.md
-Pick **3 to 5 shot cards** that fit THIS repository, ONLY from the list in ./input/shots.md, and
-build the film around them. Read only those cards and their demos; do not browse the rest of
-the library. Adapt each card faithfully to motion graphics, terminal/code blocks, architecture
-diagrams, and any real screenshots in `./input/assets/`. In NOTES.md, name the cards you picked
-and say in one line why each fits.
+Pick **3 to 5 shot cards** from `./input/shots.md` (prioritizing the style-matched cards listed
+above) and build the film around them. Read only those cards and their demos; do not browse the
+rest of the library. Adapt each card faithfully to motion graphics, terminal/code blocks,
+diagrams, and any real screenshots in `./input/assets/`.
 
 ## Inputs (all in ./input, read-only)
 - repo.json: repository metadata (name, fullName, description, url, language, stars, license, topics).
@@ -28,15 +39,6 @@ and say in one line why each fits.
 
 {{CAPTIONS_SECTION}}
 
-## Visual storytelling for a repository reel
-- **Hook fast (first 2 seconds):** open with the repository name/problem and why a developer should
-  care — bold typography, strong contrast, crisp pacing.
-- **Show real developer proof:** animate a real install command (`npm i ...`, `pip install ...`,
-  `git clone ...`), a real code snippet from `readme.md`, a clean feature breakdown, or real
-  screenshots from `./input/assets/`.
-- **Clean end card (2–3 s):** display the repository path (`owner/repo` / GitHub URL), license or
-  tagline, and a crisp call to action.
-
 ## Checking your work (time counts: a full render takes minutes on CI)
 - Check with stills, not renders: `npx remotion still src/index.ts Film --frame=<n> <out.png>`
   at every scene boundary and at the key moments. Fix and re-check stills as often as needed.
@@ -44,16 +46,13 @@ and say in one line why each fits.
 - Render a second time only for a defect anyone would see at once (black or empty frames,
   overlapping text, broken layout, missing voice). Never a third time.
 
-## Everything else is yours
-The story, pacing, transitions, camera, background, typography, code styling, and captions.
-The logo (if present) and the accent colour {{ACCENT}} are there if you want them.
-
 ## The one rule
 Every claim, command, code snippet, metric, and image must come strictly from `readme.md`,
 `repo.json`, `facts.md`, or `./input/assets/`. Never invent fake commands, fake benchmarks,
 or fake UI screenshots.
 
 ## Output contract (CI depends on it)
+- ./STRATEGY.md: written FIRST (developer hook, narrative angle, visual system, shot plan).
 - ./film already holds an EMPTY Remotion project with its packages installed (remotion 4.0.541,
   React 19, @remotion/google-fonts, @remotion/motion-blur): setup only, no look. Build the film
   in it. The composition is `Film` in src/Root.tsx; set its size, fps and length there. Add a

@@ -32,8 +32,16 @@ test("describeToolUse maps ElevenLabs, Remotion, Write, and Read events cleanly"
     "workspace",
   );
   assert.equal(
+    describeToolUse("Bash", { command: "cd /tmp/x; cat > STRATEGY.md <<EOF\n# Strategy\nEOF" }).label,
+    "Crafting creative strategy (STRATEGY.md)",
+  );
+  assert.equal(
     describeToolUse("Bash", { command: "cd /tmp/x; cat > NOTES.md <<EOF\nhi\nEOF" }).label,
     "Writing notes & subtitle timings",
+  );
+  assert.equal(
+    describeToolUse("Write", { file_path: "/tmp/x/creative/STRATEGY.md" }).label,
+    "Crafting creative strategy (STRATEGY.md)",
   );
   assert.equal(describeToolUse("Write", { file_path: "/tmp/x/creative/captions.json" }).label, "Writing captions.json");
   assert.equal(describeToolUse("Edit", { file_path: "/tmp/x/creative/film/src/Film.tsx" }).label, "Writing src/Film.tsx");

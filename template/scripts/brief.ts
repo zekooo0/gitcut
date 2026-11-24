@@ -256,6 +256,7 @@ async function main() {
       path,
       url: d.url,
       title: d.title,
+      theme: d.theme,
       headings: d.headings.map((h: { text: string }) => h.text),
       tabsAndButtons: lab([...d.tabs, ...d.buttons]).slice(0, 90),
       inputs: d.inputs,
@@ -506,6 +507,10 @@ where the feature lives, then pages it changes. Answer:
   // discovery
   const pages = routes.map((r) => discover(siteRef, r));
   writeFileSync(join(outDir, "prompts/discovery.json"), JSON.stringify(pages, null, 1));
+  const primaryTheme = pages[0]?.theme;
+  if (primaryTheme) {
+    writeFileSync(join(outDir, "theme.json"), JSON.stringify(primaryTheme, null, 2) + "\n");
+  }
 
   // pass 2: the brief
   const captureHeader = siteName ? `"site": "${siteName}", ` : "";
