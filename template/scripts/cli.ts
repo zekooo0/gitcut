@@ -26,8 +26,15 @@ import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { slugifyTitle } from "./brief.ts";
+import {
+  formatUserConfig,
+  getUserConfigPath,
+  loadUserConfig,
+  resetUserConfig,
+  updateUserConfig,
+} from "./lib/config.ts";
 import { detectGitHubRepo, formatDoctorReport, runDoctorChecks } from "./lib/doctor.ts";
-import { detectProviders, formatProvidersTable, PROVIDER_CATALOG } from "./lib/providers.ts";
+import { detectProviders, formatProvidersTable, normalizeProvider, PROVIDER_CATALOG, VALID_PROVIDERS } from "./lib/providers.ts";
 import { confirmPrompt, renderBanner, renderSummaryBox, selectPrompt, textPrompt } from "./lib/prompts.ts";
 import { slugFor } from "./slug.ts";
 
@@ -41,8 +48,9 @@ export const CLI_HELP = `GitCut CLI
 
 Usage:
   gitcut                   Interactive guided wizard (easiest way to start!)
-  gitcut doctor            Check local prerequisites (Node 24+, AI providers, jq, ffmpeg, gh)
+  gitcut config            Set your global default AI provider & model (saved once for all videos)
   gitcut providers         List all supported AI providers (Claude, Codex, Gemini, OpenCode, OpenRouter, Ollama...)
+  gitcut doctor            Check local prerequisites (Node 24+, AI providers, jq, ffmpeg, gh)
   gitcut setup-github      Add .gitcut.json + .github/workflows/gitcut.yml to your repo
   gitcut init              [--url <url>] [--auto-preview] [--name <product>] [--website <url>] [--accent <#hex>] [--out .gitcut.json] [--force]
   gitcut repo              <owner/repo | github-url | local-dir> [--format vertical|square|landscape] [--style <preset>] [--provider <id>] [--model <name>] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
@@ -82,7 +90,8 @@ Examples:
 AI Providers (--provider & --model):
   CLIs: claude, codex (OpenAI), gemini-cli (Google), opencode (75+ models)
   APIs: anthropic, openai, gemini, openrouter, deepseek, xai, groq, mistral, ollama, openai-compatible
-  Default is --provider auto (auto-detects installed CLIs & API keys). Run \`gitcut providers\` to inspect.
+  Set your global default once with \`gitcut config\` (or \`gitcut config set --provider codex --model gpt-5.4\`).
+  Run \`gitcut providers\` to inspect what is ready on your machine.
 
 Visual styles (--style):
   auto (default: matches the live site's real CSS theme, or picks a distinct look per repo),
@@ -322,9 +331,77 @@ function listExistingFilms(cwd: string): string[] {
     .filter((dir) => existsSync(join(dir, "creative", "film", "package.json")));
 }
 
+async function runConfigureGlobalAI() {
+  const current = loadUserConfig();
+  const statuses = detectProviders();
+  const ready = statuses.filter((s) => s.available);
+  const others = statuses.filter((s) => !s.available);
+
+  const options = [
+    { value: "auto", label: "Auto (detect automatically)", hint: "Picks the first ready CLI or API key" },
+    ...ready.map((s) => ({
+      value: s.info.id,
+      label: `${s.info.label} (ready)`,
+      hint: s.info.shortHint,
+    })),
+    ...others.map((s) => ({
+      value: s.info.id,
+      label: s.info.label,
+      hint: `${s.reason} — ${s.info.shortHint}`,
+    })),
+  ];
+
+  const defaultIdx = current.provider
+    ? Math.max(0, options.findIndex((o) => o.value === current.provider))
+    : 0;
+  const chosenProvider = await selectPrompt("Choose global default AI provider", options, defaultIdx);
+
+  if (chosenProvider === "auto") {
+    const { path } = updateUserConfig({ provider: "auto", model: "" });
+    console.log(`\n✓ Global default AI set to Auto (${path})`);
+    return;
+  }
+
+  const info = PROVIDER_CATALOG[chosenProvider as keyof typeof PROVIDER_CATALOG];
+  const modelOptions = [
+    {
+      value: "__default__",
+      label: info.defaultModel ? `${info.defaultModel} (provider default)` : "Use provider default",
+      hint: "Recommended",
+    },
+    ...info.popularModels
+      .filter((m) => m !== info.defaultModel && m !== "custom-model-name")
+      .map((m) => ({ value: m, label: m })),
+    { value: "__custom__", label: "Enter custom model name…", hint: "Any model ID supported by this provider" },
+  ];
+  const modelPick = await selectPrompt(`Choose global default model for ${info.label}`, modelOptions);
+  let chosenModel: string | undefined;
+  if (modelPick === "__custom__") {
+    chosenModel = await textPrompt("Custom model name", {
+      defaultValue: current.provider === chosenProvider ? current.model : undefined,
+      placeholder: info.popularModels[0],
+      validate: (v) => (v.trim() ? null : "Enter a model name."),
+    });
+  } else if (modelPick !== "__default__") {
+    chosenModel = modelPick;
+  }
+
+  const { path, config } = updateUserConfig({
+    provider: chosenProvider as keyof typeof PROVIDER_CATALOG,
+    model: chosenModel ?? "",
+  });
+  console.log(
+    `\n✓ Saved global default AI: ${config.provider}${config.model ? ` · ${config.model}` : " (default model)"} (${path})`,
+  );
+}
+
 async function runWizard() {
   console.log(renderBanner(readCliVersion()));
   const existingFilms = listExistingFilms(process.cwd());
+  const userCfg = loadUserConfig();
+  const currentAiLabel = userCfg.provider && userCfg.provider !== "auto"
+    ? `${userCfg.provider}${userCfg.model ? ` · ${userCfg.model}` : ""}`
+    : "auto";
 
   const menuOptions = [
     { value: "repo", label: "Repo / README Reel", hint: "15–30 s showcase from any GitHub repo (no browser)" },
@@ -332,6 +409,7 @@ async function runWizard() {
     ...(existingFilms.length
       ? [{ value: "edit", label: "Edit an existing video", hint: `Modify one of ${existingFilms.length} film(s) in ./.gitcut/` }]
       : []),
+    { value: "config", label: "Default AI model", hint: `Global setting — currently: ${currentAiLabel}` },
     { value: "setup-github", label: "Set up GitHub Actions", hint: "Add .gitcut.json + /gitcut PR workflow to this repo" },
     { value: "providers", label: "View AI providers & models", hint: "Claude, Codex, Gemini, OpenCode, OpenRouter, Ollama…" },
     { value: "doctor", label: "Check my setup (doctor)", hint: "Verify Node, AI providers, jq, ffmpeg, and audio" },
@@ -352,8 +430,17 @@ async function runWizard() {
       return;
     }
 
+    if (choice === "config") {
+      await runConfigureGlobalAI();
+      return;
+    }
+
     if (choice === "providers") {
+      const cfg = loadUserConfig();
       console.log("\n" + formatProvidersTable(detectProviders()));
+      console.log(
+        `\nGlobal default: ${cfg.provider ?? "auto"}${cfg.model ? ` · ${cfg.model}` : ""}  (change with \`gitcut config\`)`,
+      );
       return;
     }
 
@@ -411,27 +498,12 @@ async function runWizard() {
       { value: "terminal-brutalist", label: "Terminal Brutalist", hint: "Stark monochrome, sharp borders, monospace" },
       { value: "dark-glow", label: "Dark Glow", hint: "Sleek obsidian dark stage with ambient glow" },
     ]);
-    const readyProviders = detectProviders().filter((p) => p.available);
-    let provider = "auto";
-    let model: string | undefined;
-    if (readyProviders.length > 1) {
-      provider = await selectPrompt("Choose AI provider", [
-        { value: "auto", label: "Auto", hint: `Default (${readyProviders[0].info.label})` },
-        ...readyProviders.map((p) => ({
-          value: p.info.id,
-          label: p.info.label,
-          hint: p.info.shortHint,
-        })),
-      ]);
-      if (provider !== "auto") {
-        const info = PROVIDER_CATALOG[provider as keyof typeof PROVIDER_CATALOG];
-        const modelInput = await textPrompt(`Model for ${info.label} (optional)`, {
-          defaultValue: info.defaultModel || undefined,
-          placeholder: info.popularModels.slice(0, 3).join(", "),
-        });
-        if (modelInput) model = modelInput;
-      }
-    }
+    // Use the saved global AI default (configure once via `gitcut config` or the main menu).
+    const provider = userCfg.provider;
+    const model = userCfg.model;
+    const aiDisplay = provider && provider !== "auto"
+      ? `${provider}${model ? ` · ${model}` : ""} (global default)`
+      : "auto (change anytime via `gitcut config`)";
     const captions = await confirmPrompt("Burn synced captions into the video?", true);
     const audio = process.env.ELEVENLABS_API_KEY
       ? await selectPrompt("Audio mode", [
@@ -457,7 +529,7 @@ async function runWizard() {
           ["Repository", target],
           ["Format", format],
           ["Style", style],
-          ["AI", model ? `${provider} (${model})` : provider],
+          ["AI", aiDisplay],
           ["Captions", captions ? "burned-in + .srt/.vtt" : ".srt/.vtt only"],
           ["Audio", audio === "elevenlabs" ? "ElevenLabs (voice + music + SFX)" : "Silent / captioned"],
           ["Output", outDir],
@@ -499,7 +571,7 @@ async function runWizard() {
         ["Routes", routes || "AI auto-discovery"],
         ["Format", format],
         ["Style", style],
-        ["AI", model ? `${provider} (${model})` : provider],
+        ["AI", aiDisplay],
         ["Captions", captions ? "burned-in + .srt/.vtt" : ".srt/.vtt only"],
         ["Audio", audio === "elevenlabs" ? "ElevenLabs (voice + music + SFX)" : "Silent / captioned"],
         ["Output", outDir],
@@ -565,8 +637,75 @@ async function main() {
     return;
   }
 
+  if (cmd === "config") {
+    const [sub, ...subRest] = rest;
+    if (!sub) {
+      if (process.stdin.isTTY && process.stdout.isTTY) {
+        try {
+          await runConfigureGlobalAI();
+        } catch (err) {
+          if ((err as Error).message !== "CANCELLED") throw err;
+        }
+        return;
+      }
+      console.log(formatUserConfig(loadUserConfig(), getUserConfigPath()));
+      return;
+    }
+    if (sub === "show" || sub === "get") {
+      console.log(formatUserConfig(loadUserConfig(), getUserConfigPath()));
+      return;
+    }
+    if (sub === "reset" || sub === "clear") {
+      const p = resetUserConfig();
+      console.log(`✓ Reset global config (${p})`);
+      return;
+    }
+    if (sub === "set") {
+      const { values, positionals } = parseArgs({
+        args: subRest,
+        allowPositionals: true,
+        options: {
+          provider: { type: "string" },
+          model: { type: "string" },
+        },
+      });
+      let reqProvider = values.provider;
+      let reqModel = values.model;
+      if (positionals[0] === "provider" && positionals[1]) reqProvider = positionals[1];
+      if (positionals[0] === "model" && positionals[1]) reqModel = positionals[1];
+      if (reqProvider === undefined && reqModel === undefined) {
+        console.error(
+          "usage:\n" +
+            "  gitcut config set --provider <id> [--model <name>]\n" +
+            "  gitcut config set provider <id>\n" +
+            "  gitcut config set model <name>",
+        );
+        process.exit(2);
+      }
+      const patch: { provider?: (typeof VALID_PROVIDERS)[number]; model?: string } = {};
+      if (reqProvider !== undefined) {
+        const norm = normalizeProvider(reqProvider);
+        if (!norm) {
+          console.error(`Unknown provider "${reqProvider}". Valid providers: ${VALID_PROVIDERS.join(", ")}`);
+          process.exit(2);
+        }
+        patch.provider = norm;
+      }
+      if (reqModel !== undefined) patch.model = reqModel;
+      const { path, config } = updateUserConfig(patch);
+      console.log(formatUserConfig(config, path));
+      return;
+    }
+    console.error("usage: gitcut config [show | set --provider <id> [--model <name>] | reset]");
+    process.exit(2);
+  }
+
   if (cmd === "providers" || cmd === "models") {
+    const cfg = loadUserConfig();
     console.log(formatProvidersTable(detectProviders()));
+    console.log(
+      `\nGlobal default: ${cfg.provider ?? "auto"}${cfg.model ? ` · ${cfg.model}` : ""}  (change with \`gitcut config\`)`,
+    );
     return;
   }
 

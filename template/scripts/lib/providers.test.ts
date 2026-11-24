@@ -59,6 +59,26 @@ test("resolveProvider auto-detects installed CLIs and API keys cleanly", () => {
   });
   assert.equal(rBridge.id, "gemini-cli");
 
+  // Global user config applies when no explicit provider/model is requested
+  const rCfg = resolveProvider("", {
+    purpose: "creative",
+    env: {},
+    userConfig: { provider: "opencode", model: "anthropic/claude-sonnet-4-5" },
+    hasBin: (b) => b === "opencode" || b === "claude",
+  });
+  assert.equal(rCfg.id, "opencode");
+  assert.equal(rCfg.model, "anthropic/claude-sonnet-4-5");
+
+  // Explicit --provider overrides saved global config (and ignores stale model)
+  const rOverride = resolveProvider("codex", {
+    purpose: "creative",
+    env: {},
+    userConfig: { provider: "opencode", model: "anthropic/claude-sonnet-4-5" },
+    hasBin: (b) => b === "codex" || b === "opencode",
+  });
+  assert.equal(rOverride.id, "codex");
+  assert.equal(rOverride.model, "");
+
   // Throws helpful error when nothing is configured
   assert.throws(() => resolveProvider("auto", { env: {}, hasBin: () => false }), /No AI provider found/);
 });

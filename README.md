@@ -111,7 +111,19 @@ GitCut works with both **agentic coding CLIs** (using your existing subscription
 | `ollama` | Local API | `OLLAMA_HOST` + `OLLAMA_MODEL` | `qwen2.5-coder:32b`, `qwen3:32b` |
 | `openai-compatible` | Custom API | `AI_BASE_URL` (+ optional `AI_API_KEY`) | LM Studio, vLLM, Together, Azure, etc. |
 
-Pass `--provider <id> --model <name>` on the CLI, pick it in the interactive wizard (`npx gitcut-cli`), set `provider` / `model` in `.gitcut.json`, or pass `provider=openai model=gpt-5` in a `/gitcut plan` PR comment.
+Pass `--provider <id> --model <name>` for a single run, or **save your global default once** so you never have to pick a model per video:
+
+```bash
+# Interactive global default picker (saved to ~/.config/gitcut/config.json):
+npx gitcut-cli config
+
+# Or set directly in one command:
+npx gitcut-cli config set --provider codex --model gpt-5.4
+npx gitcut-cli config set --provider opencode --model anthropic/claude-sonnet-4-5
+npx gitcut-cli config reset   # back to auto
+```
+
+You can also set `provider` / `model` per-repo in `.gitcut.json`, or pass `provider=openai model=gpt-5` in a `/gitcut plan` PR comment.
 
 ---
 

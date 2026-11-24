@@ -60,7 +60,7 @@ SITE_META=$(SCRIPTS_DIR="$SCRIPTS_DIR" SCRIPT_EXT="$SCRIPT_EXT" REPO_MODE="$REPO
     seed: s.fullName || s.name || s.product?.name || path.basename(dir),
     accentOverride: s.brand?.accent || undefined,
   });
-  const providerSpec = resolveProvider(process.env.AI_PROVIDER || s.provider || "auto", {
+  const providerSpec = resolveProvider(process.env.AI_PROVIDER || s.provider || "", {
     model: process.env.AI_MODEL || s.model || undefined,
     purpose: "creative",
   });

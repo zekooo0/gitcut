@@ -3,6 +3,7 @@
  * Zero external dependencies.
  */
 import { spawnSync } from "node:child_process";
+import { loadUserConfig } from "./config.ts";
 import { detectProviders } from "./providers.ts";
 
 export type CheckResult = {
@@ -60,11 +61,13 @@ export function runDoctorChecks(opts: { skipAuth?: boolean; env?: NodeJS.Process
     });
   } else {
     const summary = ready.map((p) => p.info.id).join(", ");
+    const cfg = loadUserConfig(env);
+    const active = cfg.provider ? ` · global default: ${cfg.provider}${cfg.model ? ` (${cfg.model})` : ""}` : "";
     results.push({
       name: "AI Provider",
       required: true,
       ok: true,
-      detail: `${ready.length} available (${summary})`,
+      detail: `${ready.length} available (${summary})${active}`,
     });
   }
 

@@ -45,6 +45,8 @@ test("cli init scaffolds .gitcut.json and refuses overwrite without --force", ()
 test("cli help prints usage and exits 0", () => {
   const out = execFileSync("node", [CLI, "help"], { encoding: "utf8" });
   assert.match(out, /gitcut doctor/);
+  assert.match(out, /gitcut config/);
+  assert.match(out, /gitcut providers/);
   assert.match(out, /gitcut setup-github/);
   assert.match(out, /gitcut create/);
   assert.match(out, /gitcut repo/);
@@ -96,5 +98,28 @@ test("cli repo --plan-only builds repo.json, BRIEF.md, and copies README assets"
   } finally {
     rmSync(srcDir, { recursive: true, force: true });
     rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test("cli config set, show, and reset manage global AI defaults", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gc-cfg-"));
+  const cfgPath = join(dir, "config.json");
+  const env = { ...process.env, GITCUT_CONFIG: cfgPath };
+  try {
+    const setOut = execFileSync("node", [CLI, "config", "set", "--provider", "codex", "--model", "gpt-5.4"], {
+      encoding: "utf8",
+      env,
+    });
+    assert.match(setOut, /provider\s+codex/);
+    assert.match(setOut, /model\s+gpt-5\.4/);
+
+    const showOut = execFileSync("node", [CLI, "config", "show"], { encoding: "utf8", env });
+    assert.match(showOut, /provider\s+codex/);
+
+    execFileSync("node", [CLI, "config", "reset"], { encoding: "utf8", env });
+    const afterReset = execFileSync("node", [CLI, "config", "show"], { encoding: "utf8", env });
+    assert.match(afterReset, /provider\s+auto \(not set\)/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

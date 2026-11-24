@@ -8,6 +8,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadUserConfig, type UserConfig } from "./config.ts";
 
 export type ConcreteProviderId =
   | "claude"
@@ -414,16 +415,25 @@ export function resolveProvider(
     model?: string;
     purpose?: "creative" | "plan";
     env?: NodeJS.ProcessEnv;
+    userConfig?: UserConfig;
     hasBin?: (bin: string) => boolean;
   } = {},
 ): ResolvedProvider {
   const env = opts.env ?? process.env;
   const hasBin = opts.hasBin ?? commandExists;
   const purpose = opts.purpose ?? "creative";
+  const userCfg: UserConfig =
+    opts.userConfig !== undefined
+      ? opts.userConfig
+      : opts.env !== undefined && !opts.env.GITCUT_CONFIG && !opts.env.XDG_CONFIG_HOME
+        ? {}
+        : loadUserConfig(env);
+
   const rawReq = (requested ?? "").trim();
-  const normalized = rawReq ? normalizeProvider(rawReq) : "auto";
-  if (rawReq && !normalized) {
-    throw new Error(`Unknown AI provider "${rawReq}". Valid providers: ${VALID_PROVIDERS.join(", ")}`);
+  const effectiveReq = rawReq || userCfg.provider || "auto";
+  const normalized = normalizeProvider(effectiveReq);
+  if (!normalized) {
+    throw new Error(`Unknown AI provider "${effectiveReq}". Valid providers: ${VALID_PROVIDERS.join(", ")}`);
   }
 
   const statuses = detectProviders({ env, hasBin });
@@ -501,9 +511,15 @@ export function resolveProvider(
     (chosen === "ollama" ? env.OLLAMA_MODEL?.trim() : undefined) ||
     (purpose === "plan" ? env.BRIEF_MODEL?.trim() : env.CREATIVE_MODEL?.trim()) ||
     env.AI_MODEL?.trim();
+  // Only apply global userConfig.model if we're using the configured provider (or no explicit override switched providers).
+  const cfgModel =
+    !rawReq || normalizeProvider(rawReq) === userCfg.provider || !userCfg.provider
+      ? userCfg.model?.trim()
+      : undefined;
   const model =
     opts.model?.trim() ||
     envModel ||
+    cfgModel ||
     (purpose === "plan" ? info.defaultPlanModel : info.defaultModel);
 
   const apiKey = info.kind === "api" ? getApiKeyForProvider(chosen, env) : undefined;
@@ -541,7 +557,7 @@ export async function callTextCompletion(opts: {
   env?: NodeJS.ProcessEnv;
 }): Promise<{ text: string; resolved: ResolvedProvider }> {
   const env = opts.env ?? process.env;
-  const resolved = resolveProvider(opts.provider || env.BRIEF_PROVIDER || env.AI_PROVIDER || "auto", {
+  const resolved = resolveProvider(opts.provider || env.BRIEF_PROVIDER || env.AI_PROVIDER || "", {
     model: opts.model,
     purpose: "plan",
     env,
