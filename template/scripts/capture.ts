@@ -147,18 +147,81 @@ const findPanel = async (): Promise<Locator> => {
     });
     return loc;
   }
-  // Tag the largest scrollable element, then address it by that tag.
+  // Tag the largest scrollable element (at least 40% of viewport), else fall back to the document root.
   await page.evaluate(() => {
     document.querySelectorAll("[data-fv-panel]").forEach((e) => e.removeAttribute("data-fv-panel"));
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
     const els = [...document.querySelectorAll<HTMLElement>("*")].filter((e) => {
+      if (e === document.documentElement || e === document.body) return false;
       const s = getComputedStyle(e);
-      return /(auto|scroll)/.test(s.overflowY) && e.scrollHeight > e.clientHeight + 20;
+      return (
+        /(auto|scroll)/.test(s.overflowY) &&
+        e.scrollHeight > e.clientHeight + 20 &&
+        e.clientWidth >= vw * 0.4 &&
+        e.clientHeight >= vh * 0.4
+      );
     });
     els.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight);
     (els[0] ?? document.documentElement).setAttribute("data-fv-panel", "1");
   });
   return page.locator("[data-fv-panel]").first();
 };
+
+type PanelGeometry = {
+  isRoot: boolean;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  sh: number;
+  scrollTop: number;
+};
+
+/** Compute viewport-clamped geometry for a panel (handles scrolled documentElement safely). */
+const getPanelGeometry = async (panel: Locator): Promise<PanelGeometry> =>
+  panel.evaluate((e) => {
+    const isRoot = e === document.documentElement || e === document.body;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    if (isRoot) {
+      return {
+        isRoot: true,
+        x: 0,
+        y: 0,
+        w: Math.max(1, Math.min(Math.floor(e.clientWidth || vw), vw)),
+        h: Math.max(1, Math.min(Math.floor(e.clientHeight || vh), vh)),
+        sh: Math.max(e.scrollHeight, document.body?.scrollHeight ?? 0, vh),
+        scrollTop: window.scrollY || document.documentElement.scrollTop || document.body?.scrollTop || 0,
+      };
+    }
+    const r = e.getBoundingClientRect();
+    const x = Math.max(0, Math.min(Math.floor(r.left), vw - 1));
+    const y = Math.max(0, Math.min(Math.floor(r.top), vh - 1));
+    const w = Math.max(1, Math.min(Math.floor(e.clientWidth || r.width), vw - x));
+    const h = Math.max(1, Math.min(Math.floor(e.clientHeight || r.height), vh - y));
+    return {
+      isRoot: false,
+      x,
+      y,
+      w,
+      h,
+      sh: Math.max(e.scrollHeight, h),
+      scrollTop: e.scrollTop || 0,
+    };
+  });
+
+/** Jump scroll immediately even when CSS `scroll-behavior: smooth` is active. */
+const scrollPanelInstant = async (panel: Locator, top: number): Promise<number> =>
+  panel.evaluate((e, t) => {
+    const isRoot = e === document.documentElement || e === document.body;
+    if (isRoot) {
+      window.scrollTo({ top: t, left: 0, behavior: "instant" });
+      return window.scrollY || document.documentElement.scrollTop || document.body?.scrollTop || 0;
+    }
+    e.scrollTo({ top: t, behavior: "instant" });
+    return e.scrollTop;
+  }, top);
 
 /** Names of the elements the last measure() call could not find. */
 let missing: string[] = [];
@@ -276,38 +339,46 @@ const measure = async (
   return out;
 };
 
-/** Stitch the whole scroll container into one PNG (DPR px). */
+/** Stitch the whole scroll container into one PNG (DPR px), or capture only the visible slice when full=false. */
 const stitchPanel = async (panel: Locator, file: string, full: boolean) => {
-  const g = await panel.evaluate((e) => {
-    const r = e.getBoundingClientRect();
-    return { x: r.left, y: r.top, w: e.clientWidth, h: e.clientHeight, sh: e.scrollHeight };
-  });
-  const parts: { input: Buffer; top: number; left: number }[] = [];
-  const total = full ? g.sh : g.h;
+  const g = await getPanelGeometry(panel);
+  const clip = { x: g.x, y: g.y, width: g.w, height: g.h };
+  if (!full) {
+    await park();
+    const buf = await page.screenshot({ clip, scale: "device" });
+    const meta = await sharp(buf).metadata();
+    const W = meta.width ?? Math.round(g.w * DPR);
+    const H = meta.height ?? Math.round(g.h * DPR);
+    writeFileSync(file, buf);
+    return { geo: g, size: [W, H] as [number, number] };
+  }
+
+  const parts: { input: Buffer; top: number; left: number; width: number; bottom: number }[] = [];
+  let maxSh = g.sh;
   let top = 0;
   let prev = -1;
   for (let step = 0; step < 60; step++) {
-    const st = await panel.evaluate((e, t) => {
-      e.scrollTop = t;
-      return e.scrollTop;
-    }, top);
+    const st = await scrollPanelInstant(panel, top);
     if (st === prev) break; // the container would not scroll further
     prev = st;
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(200);
     await park();
-    const buf = await page.screenshot({
-      clip: { x: g.x, y: g.y, width: g.w, height: g.h },
-      scale: "device",
-    });
-    parts.push({ input: buf, top: Math.round(st * DPR), left: 0 });
-    if (!full || st + g.h >= g.sh - 1) break;
+    const cur = await getPanelGeometry(panel);
+    maxSh = Math.max(maxSh, cur.sh);
+    const buf = await page.screenshot({ clip, scale: "device" });
+    const meta = await sharp(buf).metadata();
+    const tileW = meta.width ?? Math.round(g.w * DPR);
+    const tileH = meta.height ?? Math.round(g.h * DPR);
+    const offsetTop = Math.round(st * DPR);
+    parts.push({ input: buf, top: offsetTop, left: 0, width: tileW, bottom: offsetTop + tileH });
+    if (st + g.h >= maxSh - 1) break;
     top = st + g.h;
   }
-  await panel.evaluate((e) => (e.scrollTop = 0));
-  const W = Math.round(g.w * DPR);
-  const H = Math.round(total * DPR);
+  await scrollPanelInstant(panel, 0);
+  const W = Math.max(Math.round(g.w * DPR), ...parts.map((p) => p.width));
+  const H = Math.max(Math.round(maxSh * DPR), ...parts.map((p) => p.bottom));
   await sharp({ create: { width: W, height: H, channels: 4, background: "#ffffff" } })
-    .composite(parts)
+    .composite(parts.map(({ input, top: t, left }) => ({ input, top: t, left })))
     .png()
     .toFile(file);
   return { geo: g, size: [W, H] as [number, number] };
@@ -375,20 +446,19 @@ async function runShot(shot: Shot) {
     layout.window ??= { src: shot.name, width: size[0] };
     // the panel offset inside the window capture
     const panel = await findPanel();
-    const g = await panel.evaluate((e) => {
-      const r = e.getBoundingClientRect();
-      return { x: r.left, y: r.top, w: e.clientWidth };
-    });
+    const g = await getPanelGeometry(panel);
     layout.panel ??= { x: Math.round(g.x * DPR), y: Math.round(g.y * DPR), w: Math.round(g.w * DPR) };
   } else if (shot.kind === "panel") {
     const panel = await findPanel();
-    await panel.evaluate((e) => (e.scrollTop = 0));
-    const g0 = await panel.evaluate((e) => {
-      const r = e.getBoundingClientRect();
-      return { x: r.left, y: r.top };
-    });
-    const elements = await measure(shot.elements, { x: g0.x, y: g0.y, scrollTop: 0 }, "[data-fv-panel]");
-    const { size } = await stitchPanel(panel, file, shot.full ?? true);
+    const full = shot.full ?? true;
+    if (full) await scrollPanelInstant(panel, 0);
+    const g0 = await getPanelGeometry(panel);
+    const elements = await measure(
+      shot.elements,
+      { x: g0.x, y: g0.y, scrollTop: full ? g0.scrollTop : 0 },
+      "[data-fv-panel]",
+    );
+    const { size } = await stitchPanel(panel, file, full);
     positions[shot.name] = { size, elements };
   } else {
     if (!shot.element) throw new Error(`shot ${shot.name}: kind "element" needs "element"`);
