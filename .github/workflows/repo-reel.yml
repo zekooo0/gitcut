@@ -1,0 +1,194 @@
+# Generate a 15-30s Repository / README showcase reel (no browser or live app required).
+# Run manually from the Actions tab or call it from another workflow via workflow_call.
+name: GitCut Repo Reel
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "GitHub repository (owner/repo). Leave blank to reel this repository."
+        required: false
+        default: ""
+      ref:
+        description: "Optional branch or tag"
+        required: false
+        default: ""
+      format:
+        description: "Canvas aspect ratio"
+        type: choice
+        options: [vertical, square, landscape]
+        default: vertical
+      captions:
+        description: "Burn synced subtitles into the video"
+        type: choice
+        options: [on, off]
+        default: on
+      accent:
+        description: "Optional hex accent color (e.g. #2563EB)"
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      repository:
+        description: "GitHub repository (owner/repo). Defaults to caller repository."
+        type: string
+        default: ""
+      ref:
+        description: "Optional branch or tag"
+        type: string
+        default: ""
+      format:
+        description: "vertical (9:16) | square (1:1) | landscape (16:9)"
+        type: string
+        default: vertical
+      captions:
+        description: "on | off"
+        type: string
+        default: on
+      accent:
+        description: "Optional hex accent color"
+        type: string
+        default: ""
+      creative_model:
+        description: "Claude model (default: sonnet)"
+        type: string
+        default: sonnet
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      ELEVENLABS_API_KEY:
+        required: false
+      SLACK_WEBHOOK_URL:
+        required: false
+      DISCORD_WEBHOOK_URL:
+        required: false
+      NOTIFY_WEBHOOK_URL:
+        required: false
+      NOTIFY_WEBHOOK_SECRET:
+        required: false
+
+jobs:
+  reel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: template
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      TARGET_REPO: ${{ inputs.repository || github.repository }}
+      TARGET_REF: ${{ inputs.ref }}
+      TARGET_ACCENT: ${{ inputs.accent }}
+      VIDEO_FORMAT: ${{ inputs.format || 'vertical' }}
+      CAPTIONS_MODE: ${{ inputs.captions || 'on' }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            template/package-lock.json
+            creative/starter/package-lock.json
+
+      - run: npm ci --no-audit --no-fund --prefer-offline
+
+      - name: Claude Code CLI
+        run: command -v claude >/dev/null || npm install -g --no-audit --no-fund @anthropic-ai/claude-code >/dev/null
+
+      - name: Gather repository context and README assets
+        id: brief
+        run: |
+          SAFE=$(echo "$TARGET_REPO" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/-\+/-/g; s/^-//; s/-$//')
+          OUT_DIR="$RUNNER_TEMP/reel-$SAFE"
+          ARGS=("$TARGET_REPO" --out "$OUT_DIR")
+          [ -n "$TARGET_REF" ] && ARGS+=(--ref "$TARGET_REF")
+          [ -n "$TARGET_ACCENT" ] && ARGS+=(--accent "$TARGET_ACCENT")
+          node scripts/repo-brief.ts "${ARGS[@]}"
+          echo "slug=$SAFE-reel" >> "$GITHUB_OUTPUT"
+          echo "dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: "ElevenLabs proxy (optional: voice-over, music, SFX)"
+        id: eleven
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVEN_VOICE_ID: ${{ vars.ELEVEN_VOICE_ID }}
+        run: |
+          if [ -z "$ELEVENLABS_API_KEY" ]; then
+            echo "ELEVENLABS_API_KEY is not set; continuing in silent/captioned mode."
+            echo "audio_mode=silent" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf %s "$ELEVENLABS_API_KEY" | env -u ELEVENLABS_API_KEY ELEVEN_USAGE="$RUNNER_TEMP/eleven-usage.jsonl" \
+            nohup node scripts/eleven.ts serve > "$RUNNER_TEMP/eleven.log" 2>&1 &
+          for i in $(seq 20); do
+            if curl -sf http://127.0.0.1:8790/usage >/dev/null; then
+              echo "audio_mode=elevenlabs" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat "$RUNNER_TEMP/eleven.log"; exit 1
+
+      - name: Generate and render repository reel
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CREATIVE_MODEL: ${{ inputs.creative_model || vars.CREATIVE_MODEL || 'sonnet' }}
+          AUDIO_MODE: ${{ steps.eleven.outputs.audio_mode || 'silent' }}
+        run: |
+          command -v ffmpeg >/dev/null || timeout 120 sudo apt-get install -y -qq ffmpeg >/dev/null || true
+          bash scripts/creative.sh "${{ steps.brief.outputs.dir }}"
+
+      - name: Publish reel (GitHub Release)
+        id: publish
+        run: |
+          D="${{ steps.brief.outputs.dir }}"
+          SLUG="${{ steps.brief.outputs.slug }}"
+          TAG="reel-$SLUG-${{ github.run_number }}"
+          cp "$D/creative/out/video.mp4" "$RUNNER_TEMP/$SLUG.mp4"
+          ASSETS=("$RUNNER_TEMP/$SLUG.mp4")
+          if [ -f "$D/creative/out/captions.srt" ]; then
+            cp "$D/creative/out/captions.srt" "$RUNNER_TEMP/$SLUG.srt"
+            ASSETS+=("$RUNNER_TEMP/$SLUG.srt")
+          fi
+          if [ -f "$D/creative/out/captions.vtt" ]; then
+            cp "$D/creative/out/captions.vtt" "$RUNNER_TEMP/$SLUG.vtt"
+            ASSETS+=("$RUNNER_TEMP/$SLUG.vtt")
+          fi
+          gh release create "$TAG" "${ASSETS[@]}" -R "$GITHUB_REPOSITORY" --prerelease \
+            --title "Repo Reel: $TARGET_REPO" --notes "Generated by GitCut Repo Reel ($VIDEO_FORMAT). Run: $RUN_URL"
+          echo "url=${{ github.server_url }}/$GITHUB_REPOSITORY/releases/download/$TAG/$SLUG.mp4" >> "$GITHUB_OUTPUT"
+          if [ -f "$RUNNER_TEMP/$SLUG.srt" ]; then
+            echo "captions_url=${{ github.server_url }}/$GITHUB_REPOSITORY/releases/download/$TAG/$SLUG.srt" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Notify Slack, Discord, or webhook (optional)
+        continue-on-error: true
+        env:
+          VIDEO_URL: ${{ steps.publish.outputs.url }}
+          CAPTIONS_URL: ${{ steps.publish.outputs.captions_url }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+          NOTIFY_WEBHOOK_SECRET: ${{ secrets.NOTIFY_WEBHOOK_SECRET }}
+        run: |
+          ARGS=(--title "$TARGET_REPO reel" --video "$VIDEO_URL" --format "$VIDEO_FORMAT")
+          [ -n "$CAPTIONS_URL" ] && ARGS+=(--captions "$CAPTIONS_URL")
+          node scripts/notify.ts "${ARGS[@]}"
+
+      - name: Upload agent log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reel-agent-log
+          path: |
+            ${{ runner.temp }}/agent.log
+            ${{ runner.temp }}/eleven.log
+          if-no-files-found: ignore

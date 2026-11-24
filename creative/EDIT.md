@@ -10,8 +10,9 @@ CHANGES.md.
 
 You may use the video-shotcraft skill at {{SKILL}} (read-only) if the change needs a new shot or
 effect: only the cards listed in ./input/shots.md. The inputs are the same as for the first film:
-./input (facts.md, pr.md, captures/, capture.json, positions.json, layout.json, brand/). The
-film's own assets are already in film/public: reuse them.
+./input (facts.md, plus either pr.md/captures/positions.json/layout.json for a UI film, or
+readme.md/repo.json/assets/ for a repository reel, and brand/). The film's own assets are already
+in film/public: reuse them.
 
 {{EDIT_SOUND_SECTION}}
 

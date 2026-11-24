@@ -19,18 +19,31 @@ SKILL="$(cd "$HERE/../creative/shotcraft" && pwd)"
 C="$D/creative"
 RUNNER_TEMP="${RUNNER_TEMP:-/tmp}"
 
-# Read brand/product/format metadata from site config (named site, <dir>/site.json, or capture.json inline).
-SITE_META=$(VIDEO_FORMAT="${VIDEO_FORMAT:-}" CAPTIONS_MODE="${CAPTIONS_MODE:-}" node --input-type=module -e '
+# Detect mode: repo reel (repo.json, no Playwright captures) vs UI feature film (capture.json).
+REPO_MODE=0
+if [ -f "$D/repo.json" ] && [ ! -f "$D/capture.json" ]; then
+  REPO_MODE=1
+fi
+
+# Read brand/product/format metadata from repo.json (repo mode) or site config (UI mode).
+SITE_META=$(REPO_MODE="$REPO_MODE" VIDEO_FORMAT="${VIDEO_FORMAT:-}" CAPTIONS_MODE="${CAPTIONS_MODE:-}" node --input-type=module -e '
+  import fs from "node:fs";
+  import path from "node:path";
   import { loadSiteForDir } from "./scripts/lib/site.ts";
   import { resolveFormat } from "./scripts/lib/format.ts";
-  const s = loadSiteForDir(process.argv[1]) ?? {};
-  const fmt = resolveFormat(process.env.VIDEO_FORMAT || s.format || "landscape");
+  const dir = process.argv[1];
+  const isRepo = process.env.REPO_MODE === "1";
+  const s = isRepo
+    ? JSON.parse(fs.readFileSync(path.join(dir, "repo.json"), "utf8"))
+    : (loadSiteForDir(dir) ?? {});
+  const defaultFmt = isRepo ? "vertical" : (s.format || "landscape");
+  const fmt = resolveFormat(process.env.VIDEO_FORMAT || defaultFmt);
   const capEnv = (process.env.CAPTIONS_MODE || "").trim().toLowerCase();
   const captions = capEnv ? ["on", "true", "1", "yes"].includes(capEnv) : Boolean(s.captions);
   console.log(JSON.stringify({
     logo: s.brand?.logo ?? "",
     accent: s.brand?.accent ?? "#2563EB",
-    audience: s.product?.audience ?? "users",
+    audience: isRepo ? "developers" : (s.product?.audience ?? "users"),
     format: fmt.name,
     width: fmt.width,
     height: fmt.height,
@@ -47,7 +60,7 @@ FMT_WIDTH=$(jq -r .width <<<"$SITE_META")
 FMT_HEIGHT=$(jq -r .height <<<"$SITE_META")
 FMT_GUIDANCE=$(jq -r .formatGuidance <<<"$SITE_META")
 CAPTIONS_ON=$(jq -r .captions <<<"$SITE_META")
-echo "format: $FMT_NAME (${FMT_WIDTH}x${FMT_HEIGHT}), captions: $CAPTIONS_ON"
+echo "mode: $([ "$REPO_MODE" = "1" ] && echo repo-reel || echo ui-film), format: $FMT_NAME (${FMT_WIDTH}x${FMT_HEIGHT}), captions: $CAPTIONS_ON"
 
 # Resolve audio mode: auto uses ElevenLabs if the local proxy is up, otherwise silent/captioned mode.
 ELEVEN_ENDPOINT="${ELEVEN_URL:-http://127.0.0.1:8790}"
@@ -75,7 +88,7 @@ else
   # A new plan replaces the old film; keep nothing from a previous agent run.
   rm -rf "$C"
 fi
-mkdir -p "$C/input/captures" "$C/input/brand" "$C/out"
+mkdir -p "$C/input/brand" "$C/out"
 if [ -z "${EDIT_REQUEST:-}" ]; then
   # Empty Remotion project (setup only, no look), installed before the agent starts.
   cp -r "$HERE/../creative/starter" "$C/film"
@@ -90,26 +103,42 @@ if [ -z "${EDIT_REQUEST:-}" ]; then
   ' "$C/film/src/Root.tsx"
   T0=$(date +%s); ( cd "$C/film" && npm ci --no-audit --no-fund >/dev/null ); echo "starter npm ci: $(( $(date +%s) - T0 )) s"
 fi
-# only this plan's shots (the branch may still hold captures of an older plan)
-for n in $(jq -r '.shots[].name' "$D/capture.json"); do cp "$D/captures/$n.png" "$C/input/captures/"; done
-cp "$D"/{capture,positions,layout}.json "$C/input/"
+
 cp "$D/BRIEF.md" "$C/input/facts.md"                 # the planner's facts; no storyline
 # Copy central brand files and any repo-fetched brand files (e.g. from .gitcut.json)
 shopt -s nullglob
 for f in public/brand/* "$D"/brand/*; do cp "$f" "$C/input/brand/"; done
 shopt -u nullglob
 cp "$HERE/../creative/SHOTS.md" "$C/input/shots.md"   # the allowed shot cards
-if [ -n "$PR" ]; then
-  [[ "$PR" =~ ^([^/]+/[^#]+)#([0-9]+)$ ]]
-  for i in 1 2 3 4; do  # GitHub has short 5xx outages: retry
-    gh pr view "${BASH_REMATCH[2]}" -R "${BASH_REMATCH[1]}" --json title,body \
-      -q '"# \(.title)\n\n\(.body)"' > "$C/input/pr.md" && break
-    [ "$i" = 4 ] && exit 1; sleep $((2 ** i))
-  done
-elif [ -f "$D/context.md" ]; then
-  cp "$D/context.md" "$C/input/pr.md"
+
+if [ "$REPO_MODE" = "1" ]; then
+  mkdir -p "$C/input/assets"
+  cp "$D/repo.json" "$C/input/repo.json"
+  if [ -f "$D/context.md" ]; then
+    cp "$D/context.md" "$C/input/readme.md"
+  else
+    cp "$D/BRIEF.md" "$C/input/readme.md"
+  fi
+  shopt -s nullglob
+  for f in "$D"/assets/*; do cp "$f" "$C/input/assets/"; done
+  shopt -u nullglob
 else
-  cp "$D/BRIEF.md" "$C/input/pr.md"
+  mkdir -p "$C/input/captures"
+  # only this plan's shots (the branch may still hold captures of an older plan)
+  for n in $(jq -r '.shots[].name' "$D/capture.json"); do cp "$D/captures/$n.png" "$C/input/captures/"; done
+  cp "$D"/{capture,positions,layout}.json "$C/input/"
+  if [ -n "$PR" ]; then
+    [[ "$PR" =~ ^([^/]+/[^#]+)#([0-9]+)$ ]]
+    for i in 1 2 3 4; do  # GitHub has short 5xx outages: retry
+      gh pr view "${BASH_REMATCH[2]}" -R "${BASH_REMATCH[1]}" --json title,body \
+        -q '"# \(.title)\n\n\(.body)"' > "$C/input/pr.md" && break
+      [ "$i" = 4 ] && exit 1; sleep $((2 ** i))
+    done
+  elif [ -f "$D/context.md" ]; then
+    cp "$D/context.md" "$C/input/pr.md"
+  else
+    cp "$D/BRIEF.md" "$C/input/pr.md"
+  fi
 fi
 TITLE=$(head -1 "$C/input/facts.md" | sed 's/^# //')
 
@@ -119,7 +148,12 @@ if [ -n "${EDIT_REQUEST:-}" ]; then
   TEMPLATE="$HERE/../creative/EDIT.md"; BRIEF_FILE=EDIT.md
   TASK="Read ./EDIT.md and ./input/request.md and carry out the edit completely, without asking questions. Finish only when ./out/video.mp4 is rendered from the changed ./film and ./CHANGES.md is written."
 else
-  TEMPLATE="$HERE/../creative/BRIEF.md"; BRIEF_FILE=BRIEF.md
+  if [ "$REPO_MODE" = "1" ]; then
+    TEMPLATE="$HERE/../creative/REPO.md"
+  else
+    TEMPLATE="$HERE/../creative/BRIEF.md"
+  fi
+  BRIEF_FILE=BRIEF.md
   TASK="Read ./BRIEF.md and carry it out completely, end to end, without asking questions. Finish only when ./out/video.mp4 exists, ./film/package.json has the render script, and ./NOTES.md is written."
 fi
 

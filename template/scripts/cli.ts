@@ -5,6 +5,7 @@
  *   gitcut init      [--url <url>] [--name <product>] [--website <url>] [--accent <#hex>] [--out <file>] [--force]
  *   gitcut create    (--pr owner/repo#123 | --url <url> --brief <text> [--brief-file <md>])
  *                    [--title <title>] [--routes /a,/b] [--site <name|path>] [--format <preset>] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
+ *   gitcut repo      <owner/repo | github-url | local-dir> [--format vertical|square|landscape] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
  *   gitcut plan      ...same planning options as create...
  *   gitcut capture   <dir>
  *   gitcut film      <dir> [--pr owner/repo#123] [--format <preset>] [--captions] [--audio auto|elevenlabs|silent]
@@ -30,6 +31,7 @@ export const CLI_HELP = `GitCut CLI
 Usage:
   gitcut init      [--url <url>] [--name <product>] [--website <url>] [--accent <#hex>] [--out .gitcut.json] [--force]
   gitcut create    [--pr owner/repo#123 | --brief <text> | --brief-file <md>] [--url <url>] [--auto-preview] [--title <title>] [--routes /a,/b] [--site <name|path>] [--format landscape|square|vertical|16:9|1:1|9:16] [--captions] [--out <dir>] [--audio auto|elevenlabs|silent]
+  gitcut repo      <owner/repo | github-url | local-dir> [--format vertical|square|landscape|9:16|1:1|16:9] [--captions] [--accent <#hex>] [--ref <branch>] [--plan-only] [--out <dir>] [--audio auto|elevenlabs|silent]
   gitcut plan      ...same planning options as create (stops after capture.json + BRIEF.md)...
   gitcut capture   <dir>
   gitcut film      <dir> [--pr owner/repo#123] [--format <preset>] [--captions] [--audio auto|elevenlabs|silent]
@@ -51,10 +53,13 @@ Examples:
     --brief "Users can now switch between light and dark themes in Settings." \\
     --routes /settings
 
-  # 3. Generate a video from a GitHub PR against a preview URL
+  # 3. Generate a 15-30s repository showcase reel directly from a GitHub repo or local folder (no browser needed!)
+  gitcut repo zekooo0/gitcut --format vertical --captions
+
+  # 4. Generate a video from a GitHub PR against a preview URL
   gitcut create --pr owner/repo#42 --url https://pr-42.preview.example.com
 
-  # 4. Edit the film in plain English and render the final MP4
+  # 5. Edit the film in plain English and render the final MP4
   gitcut edit public/features/dark-mode-toggle "shorter intro, brighter highlight"
   gitcut render public/features/dark-mode-toggle --out ./dark-mode.mp4
 
@@ -234,6 +239,43 @@ async function main() {
     });
     writeFileSync(target, JSON.stringify(cfg, null, 2) + "\n");
     console.log(`Created ${target}`);
+    return;
+  }
+
+  if (cmd === "repo") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: {
+        out: { type: "string" },
+        ref: { type: "string" },
+        accent: { type: "string" },
+        format: { type: "string", default: "vertical" },
+        captions: { type: "boolean", default: false },
+        "plan-only": { type: "boolean", default: false },
+        audio: { type: "string", default: "auto" },
+      },
+    });
+    const target = positionals[0] ?? ".";
+    const slug = slugifyTitle(
+      target
+        .replace(/^https?:\/\/github\.com\//i, "")
+        .replace(/\.git$/i, "")
+        .replace(/\/$/, "") + "-reel",
+    );
+    const outDir = values.out ? resolve(values.out) : join(TEMPLATE_DIR, "public/features", slug);
+    const briefArgs = [join(TEMPLATE_DIR, "scripts/repo-brief.ts"), target, "--out", outDir];
+    if (values.ref) briefArgs.push("--ref", values.ref);
+    if (values.accent) briefArgs.push("--accent", values.accent);
+    runSync("node", briefArgs, { cwd: process.cwd() });
+    if (values["plan-only"]) return;
+
+    await runCreative(outDir, {
+      audio: values.audio!,
+      format: values.format,
+      captions: values.captions || undefined,
+    });
+    console.log(`\nRepository reel ready: ${join(outDir, "creative/out/video.mp4")}`);
     return;
   }
 

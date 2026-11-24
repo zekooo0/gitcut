@@ -1,19 +1,26 @@
 # GitCut
 
-An open-source pipeline that turns pull requests—or any live URL + short brief—into short product
-feature videos. A Playwright robot captures your live web app at DPR 2 and measures every UI
-element in the DOM; then an autonomous creative AI agent (Claude Code + `video-shotcraft`) designs,
-edits, and renders a brand-new Remotion film from those real screenshots—with optional ElevenLabs
-voice-over, music, and SFX, or crisp silent/captioned output.
+An open-source pipeline that turns **pull requests**, **live URLs**, or **any GitHub repository README**
+into short, AI-directed Remotion videos.
+
+- **PR & Live-UI Mode:** Playwright captures your real running web app (including authenticated
+  staging or preview deployments) at DPR 2 and measures exact DOM element boxes, then Claude Code +
+  `video-shotcraft` directs and renders a brand-new Remotion film with human review/edit loops.
+- **Repo / README Reel Mode (`gitcut repo`):** Point GitCut at any public/private GitHub repo or
+  local folder (CLI tools, libraries, frameworks—no live URL or browser required) to generate a
+  snappy 15–30 s vertical, square, or widescreen showcase reel straight from `README.md`, repo
+  metadata, and real README screenshots.
 
 There is **no rigid template and no fixed house style**: every film is designed from scratch around
-your product's real UI, logo, and accent colour, with a human approval gate before the final render.
+your product's real UI or repo, logo, and accent colour, with optional ElevenLabs voice-over, music,
+and SFX—or crisp silent/captioned output.
 
 ## Ways to use it
 
 1. **Drop-in GitHub Actions (zero server to host)** — Copy [examples/gitcut.yml](examples/gitcut.yml) and `.gitcut.json` into any repo; comment `/gitcut` (or `/video`) on PRs.
-2. **Local CLI (no GitHub PR required)** — Point `gitcut create` at `http://localhost:3000` or any staging/preview URL with a short text brief.
-3. **Central multi-repo GitHub App (optional)** — Host [app/](app/) (Probot) to route `/gitcut` commands across an entire GitHub organization into one pipeline repo.
+2. **Repo / README Reel Mode (zero browser needed)** — Run `gitcut repo owner/repo` locally or trigger [repo-reel.yml](.github/workflows/repo-reel.yml) from GitHub Actions to generate a 15–30 s README/social reel for any repo.
+3. **Local CLI (no GitHub PR required)** — Point `gitcut create` at `http://localhost:3000` or any staging/preview URL with a short text brief.
+4. **Central multi-repo GitHub App (optional)** — Host [app/](app/) (Probot) to route `/gitcut` commands across an entire GitHub organization into one pipeline repo.
 
 ---
 
@@ -43,7 +50,12 @@ npx playwright install chromium
 # 1. Optional: scaffold .gitcut.json in your app repo
 node scripts/cli.ts init --url http://localhost:3000 --name "My App"
 
-# 2. Generate a complete preview film from a local server or any live URL (no PR needed!)
+# 2. Generate a 15-30s repository reel from ANY GitHub repo or local folder (no browser needed!)
+node scripts/cli.ts repo zekooo0/gitcut --format vertical --captions
+# Or from a local directory:
+node scripts/cli.ts repo . --format landscape
+
+# 3. Generate a complete UI feature film from a local server or any live URL (no PR needed!)
 node scripts/cli.ts create \
   --url http://localhost:3000 \
   --title "Dark mode toggle" \
@@ -53,7 +65,7 @@ node scripts/cli.ts create \
 # Or film a GitHub PR against its preview deployment:
 node scripts/cli.ts create --pr your-org/your-app#42 --url https://pr-42.preview.example.com
 
-# 3. Iterate in plain English, then render the final MP4:
+# 4. Iterate in plain English, then render the final MP4:
 node scripts/cli.ts edit public/features/dark-mode-toggle "shorter intro, punchier end card"
 node scripts/cli.ts render public/features/dark-mode-toggle --out ./dark-mode.mp4
 ```
@@ -156,13 +168,15 @@ single GitHub App install:
 
 ```
 .github/workflows/
-  pipeline.yml                 Reusable workflow (zero-server adoption for any repo)
+  pipeline.yml                 Reusable PR workflow (zero-server adoption for any repo)
+  repo-reel.yml                Repository / README showcase reel workflow (no browser needed)
   gitcut.yml                   Central workflow_dispatch pipeline (for Probot App)
   ci.yml                       Tests + TypeScript check on pushes/PRs
 examples/
   gitcut.yml                   Drop-in caller workflow for target repos
 template/
-  scripts/cli.ts               Unified local CLI (init, create, plan, capture, film, edit, render)
+  scripts/cli.ts               Unified local CLI (init, create, repo, plan, capture, film, edit, render)
+  scripts/repo-brief.ts        GitHub repo or local folder -> repo.json + BRIEF.md + README assets
   scripts/brief.ts             PR or standalone brief -> capture.json + BRIEF.md
   scripts/discover.ts          Live DOM discovery for routes
   scripts/capture.ts           Playwright DPR-2 capture + DOM bounding boxes

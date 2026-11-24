@@ -45,5 +45,31 @@ test("cli init scaffolds .gitcut.json and refuses overwrite without --force", ()
 test("cli help prints usage and exits 0", () => {
   const out = execFileSync("node", [CLI, "help"], { encoding: "utf8" });
   assert.match(out, /gitcut create/);
+  assert.match(out, /gitcut repo/);
   assert.match(out, /gitcut init/);
+});
+
+test("cli repo --plan-only builds repo.json, BRIEF.md, and copies README assets", () => {
+  const srcDir = mkdtempSync(join(tmpdir(), "gc-repo-src-"));
+  const outDir = mkdtempSync(join(tmpdir(), "gc-repo-out-"));
+  try {
+    execFileSync("node", ["-e", `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      fs.mkdirSync(path.join(process.argv[1], "docs"), { recursive: true });
+      fs.writeFileSync(path.join(process.argv[1], "docs/shot.png"), "PNG");
+      fs.writeFileSync(path.join(process.argv[1], "package.json"), JSON.stringify({ name: "demo-cli", description: "Fast CLI tool", license: "MIT" }));
+      fs.writeFileSync(path.join(process.argv[1], "README.md"), "# Demo CLI\\n![Shot](./docs/shot.png)\\nInstall: \`npm i demo-cli\`");
+    `, srcDir]);
+    execFileSync("node", [CLI, "repo", srcDir, "--out", outDir, "--plan-only"], { encoding: "utf8" });
+    const meta = JSON.parse(readFileSync(join(outDir, "repo.json"), "utf8"));
+    assert.equal(meta.mode, "repo");
+    assert.equal(meta.name, "demo-cli");
+    assert.equal(meta.license, "MIT");
+    assert.ok(existsSync(join(outDir, "BRIEF.md")));
+    assert.ok(existsSync(join(outDir, "assets/shot.png")));
+  } finally {
+    rmSync(srcDir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
 });
