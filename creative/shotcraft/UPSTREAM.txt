@@ -1,0 +1,2 @@
+no git
+Vendored from https://github.com/vincentwei1021/video-shotcraft (Apache-2.0). Kept: SKILL.md, references/, demos/ (no _legacy), assets/lib, assets/scripts. Dropped: workbench, gallery, template (Ink Press), audio, readme images.

@@ -1,0 +1,22 @@
+{
+  "name": "gitcut-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GitHub App: /gitcut (or /video) on a PR starts the GitCut workflow",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "probot run ./index.js",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "probot": "^14.3.7"
+  },
+  "devDependencies": {
+    "smee-client": "^5.0.0"
+  }
+}

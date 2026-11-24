@@ -1,0 +1,6 @@
+# runner/Dockerfile builds from the repo root and needs only the lock files
+*
+!template/package.json
+!template/package-lock.json
+!creative/starter/package.json
+!creative/starter/package-lock.json

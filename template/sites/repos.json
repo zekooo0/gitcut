@@ -1,0 +1,4 @@
+{
+  "_doc": "Optional central map of source repo (owner/repo) -> site name (sites/<name>.json). A source repo can also configure itself with a .gitcut.json file in its root, or pass `/gitcut plan site=<name>`. Playwright captures web apps only.",
+  "example-org/example-app": "example"
+}

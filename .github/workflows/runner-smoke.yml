@@ -1,0 +1,47 @@
+name: GitCut runner smoke
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: gitcut-runner-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, x64, gitcut-smoke]
+    timeout-minutes: 5
+    steps:
+      - name: Verify disposable sandbox runner without application secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RUNNER_NAME" == fv-smoke-* ]]
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$RUNNER_ENVIRONMENT" = self-hosted
+          test "$(id -un)" = runner
+          test "$(id -u)" -ne 0
+          test ! -S /var/run/docker.sock
+          if command -v sudo >/dev/null 2>&1; then
+            if sudo -n true 2>/dev/null; then
+              echo 'Unexpected sudo permission'; exit 1
+            fi
+          fi
+          node --eval 'if (process.versions.node.split(".")[0] !== "24") process.exit(1); console.log("Node " + process.version)'
+          gh --version
+          claude --version
+          command -v ffmpeg
+          test -x "$REMOTION_CHROME"
+          test ! -w "$REMOTION_CHROME"
+          python3 -c 'from pathlib import Path; assert Path("/sys/fs/cgroup/memory.max").read_text().strip() == str(3500*1024*1024); assert Path("/sys/fs/cgroup/memory.swap.max").read_text().strip() == "0"; print("CONTAINER_RESOURCE_LIMITS_OK")'
+          probe=$(mktemp "$RUNNER_TEMP/gitcut-smoke.XXXXXX")
+          printf '%s\n' 'writable' > "$probe"
+          test -s "$probe"
+          rm -- "$probe"
+          printf 'Runner: %s; user: %s\n' "$RUNNER_NAME" "$(id -un)"
+          df -h "$RUNNER_TEMP"
+          echo GITCUT_GITHUB_SMOKE_OK

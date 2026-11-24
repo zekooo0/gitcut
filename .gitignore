@@ -1,0 +1,9 @@
+node_modules
+dist
+build
+out
+.env
+*.pem
+template/public/features/*/film.compiled.json
+.auth/
+creative-proto/

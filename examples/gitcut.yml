@@ -1,0 +1,33 @@
+# Copy this file to `.github/workflows/gitcut.yml` in your app repository.
+# Points to `zekooo0/gitcut` by default (change to your fork if self-hosting the pipeline).
+# Add `.gitcut.json` at the root of your repo (run `gitcut init` to scaffold one).
+name: GitCut
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  video:
+    if: >
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       (startsWith(github.event.comment.body, '/gitcut') || startsWith(github.event.comment.body, '/video'))) ||
+      (github.event_name == 'pull_request' &&
+       github.event.label.name == 'gitcut')
+    uses: zekooo0/gitcut/.github/workflows/pipeline.yml@main
+    with:
+      pipeline_repo: zekooo0/gitcut
+      pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
+      mode: ${{ github.event_name == 'pull_request' && 'plan' || '' }}
+      comment_body: ${{ github.event.comment.body || '' }}
+      comment_id: ${{ github.event.comment.id || '' }}
+      actor: ${{ github.actor }}
+    secrets: inherit

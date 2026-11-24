@@ -1,0 +1,492 @@
+# Reusable GitCut workflow — call this directly from ANY repository with NO Probot App
+# and NO server to host! See examples/gitcut.yml and README.md.
+#
+# Film artifacts are stored on dedicated orphan branches `video/<slug>` in the caller's repo
+# (never touching `main`), and preview/final MP4s are attached as GitHub Releases via GITHUB_TOKEN.
+name: GitCut Pipeline (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      pipeline_repo:
+        description: "Repository holding the GitCut pipeline (owner/repo)"
+        type: string
+        required: true
+      pipeline_ref:
+        description: "Branch, tag, or SHA of pipeline_repo to run"
+        type: string
+        default: main
+      pr_number:
+        description: "Pull request number in the calling repository"
+        type: number
+        required: true
+      mode:
+        description: "Direct mode (plan | recapture | edit | render). Leave empty when triggered by a PR comment."
+        type: string
+        default: ""
+      comment_body:
+        description: "PR comment body (when triggered by issue_comment)"
+        type: string
+        default: ""
+      comment_id:
+        description: "PR comment id (for adding the eyes reaction)"
+        type: string
+        default: ""
+      actor:
+        description: "GitHub username who triggered the comment (checked for write access)"
+        type: string
+        default: ""
+      routes:
+        description: "Optional comma-separated routes"
+        type: string
+        default: ""
+      site:
+        description: "Optional named site in template/sites/<name>.json"
+        type: string
+        default: ""
+      url:
+        description: "Optional base URL override (e.g. PR preview deployment URL)"
+        type: string
+        default: ""
+      format:
+        description: "Optional canvas format: landscape (16:9), square (1:1), or vertical (9:16)"
+        type: string
+        default: ""
+      captions:
+        description: "Optional burned-in captions toggle: on | off"
+        type: string
+        default: ""
+      clickup:
+        description: "Optional ClickUp task id"
+        type: string
+        default: ""
+      request:
+        description: "Edit mode request text"
+        type: string
+        default: ""
+      runs_on:
+        description: "Runner label JSON or string (default: ubuntu-latest)"
+        type: string
+        default: ubuntu-latest
+      creative_model:
+        description: "Claude model for the creative agent (default: sonnet)"
+        type: string
+        default: sonnet
+      brief_model:
+        description: "Optional LLM model override for the planner"
+        type: string
+        default: ""
+      eleven_voice_id:
+        description: "Optional ElevenLabs voice ID"
+        type: string
+        default: ""
+      youtube_privacy:
+        description: "YouTube upload privacy: private (default) | unlisted | public"
+        type: string
+        default: private
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+      DEMO_EMAIL:
+        required: false
+      DEMO_PASSWORD:
+        required: false
+      ELEVENLABS_API_KEY:
+        required: false
+      CLICKUP_TOKEN:
+        required: false
+      YOUTUBE_CLIENT_ID:
+        required: false
+      YOUTUBE_CLIENT_SECRET:
+        required: false
+      YOUTUBE_REFRESH_TOKEN:
+        required: false
+      SLACK_WEBHOOK_URL:
+        required: false
+      DISCORD_WEBHOOK_URL:
+        required: false
+      NOTIFY_WEBHOOK_URL:
+        required: false
+      NOTIFY_WEBHOOK_SECRET:
+        required: false
+      LINEAR_API_KEY:
+        required: false
+
+concurrency:
+  group: gitcut-${{ github.repository }}-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  video:
+    runs-on: ${{ startsWith(inputs.runs_on, '[') && fromJSON(inputs.runs_on) || inputs.runs_on }}
+    timeout-minutes: 75
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    env:
+      PR_REF: ${{ github.repository }}#${{ inputs.pr_number }}
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      DEMO_EMAIL: ${{ secrets.DEMO_EMAIL }}
+      DEMO_PASSWORD: ${{ secrets.DEMO_PASSWORD }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      BRIEF_MODEL: ${{ inputs.brief_model }}
+      CLICKUP_TOKEN: ${{ secrets.CLICKUP_TOKEN }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Checkout pipeline tools
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline_repo }}
+          ref: ${{ inputs.pipeline_ref }}
+          path: _fv_pipeline
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v5
+        if: ${{ !startsWith(inputs.runs_on, '[') }}
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            _fv_pipeline/template/package-lock.json
+            _fv_pipeline/creative/starter/package-lock.json
+
+      - name: Parse command and check permissions
+        id: cmd
+        env:
+          COMMENT_BODY: ${{ inputs.comment_body }}
+          COMMENT_ID: ${{ inputs.comment_id }}
+          ACTOR: ${{ inputs.actor }}
+          DIRECT_MODE: ${{ inputs.mode }}
+          DIRECT_ROUTES: ${{ inputs.routes }}
+          DIRECT_SITE: ${{ inputs.site }}
+          DIRECT_URL: ${{ inputs.url }}
+          DIRECT_FORMAT: ${{ inputs.format }}
+          DIRECT_CAPTIONS: ${{ inputs.captions }}
+          DIRECT_CLICKUP: ${{ inputs.clickup }}
+          DIRECT_REQUEST: ${{ inputs.request }}
+        run: |
+          if [ -n "$DIRECT_MODE" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "mode=$DIRECT_MODE" >> "$GITHUB_OUTPUT"
+            echo "routes=$DIRECT_ROUTES" >> "$GITHUB_OUTPUT"
+            echo "site=$DIRECT_SITE" >> "$GITHUB_OUTPUT"
+            echo "url=$DIRECT_URL" >> "$GITHUB_OUTPUT"
+            echo "format=$DIRECT_FORMAT" >> "$GITHUB_OUTPUT"
+            echo "captions=$DIRECT_CAPTIONS" >> "$GITHUB_OUTPUT"
+            echo "clickup=$DIRECT_CLICKUP" >> "$GITHUB_OUTPUT"
+            if [ -n "$DIRECT_REQUEST" ]; then
+              DELIM="FV_$(openssl rand -hex 8)"
+              printf 'request<<%s\n%s\n%s\n' "$DELIM" "$DIRECT_REQUEST" "$DELIM" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          OUT_TMP="$RUNNER_TEMP/cmd-out.txt"
+          GITHUB_OUTPUT="$OUT_TMP" node _fv_pipeline/template/scripts/parse-comment.ts > /dev/null
+          KIND=$(grep '^kind=' "$OUT_TMP" | head -1 | cut -d= -f2-)
+
+          if [ "$KIND" = "ignore" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$KIND" = "help" ] || [ "$KIND" = "error" ]; then
+            node --input-type=module -e '
+              import fs from "node:fs";
+              const res = JSON.parse(process.argv[1]);
+              fs.writeFileSync(process.argv[2], res.reply);
+            ' "$(node _fv_pipeline/template/scripts/parse-comment.ts)" "$RUNNER_TEMP/reply.md"
+            gh pr comment "${{ inputs.pr_number }}" -R "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/reply.md"
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PERM=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$ACTOR/permission" -q .permission 2>/dev/null || echo none)
+          case "$PERM" in
+            admin|maintain|write) ;;
+            *)
+              gh pr comment "${{ inputs.pr_number }}" -R "$GITHUB_REPOSITORY" \
+                --body "@$ACTOR only people with write access can start a feature video."
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          if [ -n "$COMMENT_ID" ]; then
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID/reactions" -f content=eyes >/dev/null 2>&1 || true
+          fi
+
+          cat "$OUT_TMP" >> "$GITHUB_OUTPUT"
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          MODE_VAL=$(grep '^mode=' "$OUT_TMP" | head -1 | cut -d= -f2-)
+          case "$MODE_VAL" in
+            plan) WHAT="Planning" ;;
+            recapture) WHAT="Capturing again" ;;
+            render) WHAT="Rendering" ;;
+            edit) WHAT="Editing" ;;
+            *) WHAT="Running" ;;
+          esac
+          gh pr comment "${{ inputs.pr_number }}" -R "$GITHUB_REPOSITORY" \
+            --body "🎬 $WHAT the feature video… I will post the result here when it finishes ([run]($RUN_URL))."
+
+      - name: Resolve the slug from the PR branch
+        id: slug
+        if: steps.cmd.outputs.should_run == 'true'
+        run: |
+          for i in 1 2 3 4; do
+            BR=$(gh pr view "${{ inputs.pr_number }}" -R "$GITHUB_REPOSITORY" --json headRefName -q .headRefName) && break
+            [ "$i" = 4 ] && exit 1; sleep $((2 ** i))
+          done
+          SLUG=$(node _fv_pipeline/template/scripts/slug.ts "$GITHUB_REPOSITORY" "$BR")
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "branch=video/$SLUG" >> "$GITHUB_OUTPUT"
+          echo "work_dir=$GITHUB_WORKSPACE/_fv_work" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare orphan video branch in caller repo
+        if: steps.cmd.outputs.should_run == 'true'
+        env:
+          MODE: ${{ steps.cmd.outputs.mode }}
+          BRANCH: ${{ steps.slug.outputs.branch }}
+          WORK_DIR: ${{ steps.slug.outputs.work_dir }}
+        run: |
+          mkdir -p "$WORK_DIR"
+          cd "$WORK_DIR"
+          git init -q
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git fetch -q --depth=1 origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+            git checkout -q -B "$BRANCH" "origin/$BRANCH"
+          elif [ "$MODE" != "plan" ]; then
+            echo "No branch $BRANCH yet: run /video (plan) first."
+            exit 1
+          else
+            git checkout -q --orphan "$BRANCH"
+          fi
+
+      - name: Install pipeline dependencies
+        if: steps.cmd.outputs.should_run == 'true'
+        working-directory: _fv_pipeline/template
+        run: npm ci --no-audit --no-fund --prefer-offline
+
+      - name: Browsers
+        if: steps.cmd.outputs.should_run == 'true'
+        working-directory: _fv_pipeline/template
+        run: |
+          [ "$RUNNER_ENVIRONMENT" = self-hosted ] && exit 0
+          npx playwright install --with-deps chromium || {
+            echo "::warning::apt mirrors unreachable; installing Chromium without system deps"
+            npx playwright install chromium; }
+
+      - name: Claude Code CLI
+        if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode != 'render'
+        run: command -v claude >/dev/null || npm install -g --no-audit --no-fund @anthropic-ai/claude-code >/dev/null
+
+      - name: Plan (LLM brief)
+        if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode == 'plan'
+        working-directory: _fv_pipeline/template
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          INPUT_ROUTES: ${{ steps.cmd.outputs.routes }}
+          INPUT_CLICKUP: ${{ steps.cmd.outputs.clickup }}
+          INPUT_SITE: ${{ steps.cmd.outputs.site }}
+          INPUT_URL: ${{ steps.cmd.outputs.url }}
+          WORK_DIR: ${{ steps.slug.outputs.work_dir }}
+        run: |
+          ARGS=(--pr "$PR_REF" --slug "${{ steps.slug.outputs.slug }}" --out "$WORK_DIR")
+          [ -n "$INPUT_ROUTES" ] && ARGS+=(--routes "$INPUT_ROUTES")
+          [ -n "$INPUT_CLICKUP" ] && ARGS+=(--clickup "$INPUT_CLICKUP")
+          [ -n "$INPUT_SITE" ] && ARGS+=(--site "$INPUT_SITE")
+          [ -n "$INPUT_URL" ] && ARGS+=(--url "$INPUT_URL")
+          node scripts/brief.ts "${ARGS[@]}"
+
+      - name: Capture the live app
+        if: steps.cmd.outputs.should_run == 'true' && (steps.cmd.outputs.mode == 'plan' || steps.cmd.outputs.mode == 'recapture')
+        working-directory: _fv_pipeline/template
+        run: node scripts/capture.ts "${{ steps.slug.outputs.work_dir }}"
+
+      - name: ElevenLabs proxy (optional)
+        id: eleven
+        if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode != 'render'
+        working-directory: _fv_pipeline/template
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVEN_VOICE_ID: ${{ inputs.eleven_voice_id }}
+        run: |
+          if [ -z "$ELEVENLABS_API_KEY" ]; then
+            echo "ELEVENLABS_API_KEY is not set; continuing in silent/captioned mode."
+            echo "audio_mode=silent" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf %s "$ELEVENLABS_API_KEY" | env -u ELEVENLABS_API_KEY ELEVEN_USAGE="$RUNNER_TEMP/eleven-usage.jsonl" \
+            nohup node scripts/eleven.ts serve > "$RUNNER_TEMP/eleven.log" 2>&1 &
+          for i in $(seq 20); do
+            if curl -sf http://127.0.0.1:8790/usage >/dev/null; then
+              echo "audio_mode=elevenlabs" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat "$RUNNER_TEMP/eleven.log"; exit 1
+
+      - name: Creative film (Claude Code + video-shotcraft)
+        if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode != 'render'
+        working-directory: _fv_pipeline/template
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CREATIVE_MODEL: ${{ inputs.creative_model }}
+          AUDIO_MODE: ${{ steps.eleven.outputs.audio_mode || 'silent' }}
+          VIDEO_FORMAT: ${{ steps.cmd.outputs.format }}
+          CAPTIONS_MODE: ${{ steps.cmd.outputs.captions }}
+          EDIT_REQUEST: ${{ steps.cmd.outputs.mode == 'edit' && steps.cmd.outputs.request || '' }}
+          ANTHROPIC_API_KEY: ""
+          OPENAI_API_KEY: ""
+          DEMO_EMAIL: ""
+          DEMO_PASSWORD: ""
+          CLICKUP_TOKEN: ""
+        run: |
+          command -v ffmpeg >/dev/null || timeout 120 sudo apt-get install -y -qq ffmpeg >/dev/null || true
+          bash scripts/creative.sh "${{ steps.slug.outputs.work_dir }}" "$PR_REF"
+
+      - name: Publish the creative preview (release asset)
+        id: preview
+        if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode != 'render'
+        run: |
+          TAG="preview-${{ steps.slug.outputs.slug }}-${{ github.run_number }}"
+          F="$RUNNER_TEMP/${{ steps.slug.outputs.slug }}-preview.mp4"
+          cp "${{ steps.slug.outputs.work_dir }}/creative/out/video.mp4" "$F"
+          gh release create "$TAG" "$F" -R "$GITHUB_REPOSITORY" --prerelease \
+            --title "Preview: ${{ steps.slug.outputs.slug }}" --notes "From $PR_REF. Run: $RUN_URL"
+          echo "url=${{ github.server_url }}/$GITHUB_REPOSITORY/releases/download/$TAG/$(basename "$F")" >> "$GITHUB_OUTPUT"
+
+      - name: Push the video branch
+        if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode != 'render'
+        working-directory: ${{ steps.slug.outputs.work_dir }}
+        run: |
+          git config user.name "gitcut[bot]"
+          git config user.email "gitcut@users.noreply.github.com"
+          printf 'node_modules/\ncreative/out/\n' > .gitignore
+          git add -A
+          git commit -m "video: ${{ steps.cmd.outputs.mode }} ${{ steps.slug.outputs.slug }} from $PR_REF" || echo "nothing new"
+          git push origin "HEAD:${{ steps.slug.outputs.branch }}"
+
+      - name: Render the final MP4
+        if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode == 'render'
+        run: |
+          W="${{ steps.slug.outputs.work_dir }}"
+          OUT="$RUNNER_TEMP/${{ steps.slug.outputs.slug }}.mp4"
+          [ -f "$W/creative/film/package.json" ] || { echo "No film on the branch: run /video (plan) first."; exit 1; }
+          ( cd "$W/creative/film" && npm ci --no-audit --no-fund && npm run render )
+          node _fv_pipeline/template/scripts/subtitles.ts "$W" || true
+          cp "$W/creative/out/video.mp4" "$OUT"
+          [ -f "$W/creative/out/captions.srt" ] && cp "$W/creative/out/captions.srt" "$RUNNER_TEMP/${{ steps.slug.outputs.slug }}.srt" || true
+          [ -f "$W/creative/out/captions.vtt" ] && cp "$W/creative/out/captions.vtt" "$RUNNER_TEMP/${{ steps.slug.outputs.slug }}.vtt" || true
+
+      - name: Publish the MP4 (release asset)
+        id: publish
+        if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode == 'render'
+        run: |
+          TAG="video-${{ steps.slug.outputs.slug }}-${{ github.run_number }}"
+          ASSETS=("$RUNNER_TEMP/${{ steps.slug.outputs.slug }}.mp4")
+          [ -f "$RUNNER_TEMP/${{ steps.slug.outputs.slug }}.srt" ] && ASSETS+=("$RUNNER_TEMP/${{ steps.slug.outputs.slug }}.srt")
+          [ -f "$RUNNER_TEMP/${{ steps.slug.outputs.slug }}.vtt" ] && ASSETS+=("$RUNNER_TEMP/${{ steps.slug.outputs.slug }}.vtt")
+          gh release create "$TAG" "${ASSETS[@]}" -R "$GITHUB_REPOSITORY" --target "${{ steps.slug.outputs.branch }}" --prerelease \
+            --title "Feature video: ${{ steps.slug.outputs.slug }}" --notes "From $PR_REF. Run: $RUN_URL"
+          echo "url=${{ github.server_url }}/$GITHUB_REPOSITORY/releases/download/$TAG/${{ steps.slug.outputs.slug }}.mp4" >> "$GITHUB_OUTPUT"
+          if [ -f "$RUNNER_TEMP/${{ steps.slug.outputs.slug }}.srt" ]; then
+            echo "captions_url=${{ github.server_url }}/$GITHUB_REPOSITORY/releases/download/$TAG/${{ steps.slug.outputs.slug }}.srt" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload to YouTube (optional)
+        id: youtube
+        if: steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode == 'render'
+        continue-on-error: true
+        working-directory: _fv_pipeline/template
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_PRIVACY: ${{ inputs.youtube_privacy }}
+        run: node scripts/youtube-upload.ts --file "$RUNNER_TEMP/${{ steps.slug.outputs.slug }}.mp4" --pr "$PR_REF" --dir "${{ steps.slug.outputs.work_dir }}"
+
+      - name: Comment on the PR
+        if: success() && steps.cmd.outputs.should_run == 'true'
+        working-directory: _fv_pipeline/template
+        env:
+          MODE: ${{ steps.cmd.outputs.mode }}
+          EDIT_REQUEST: ${{ steps.cmd.outputs.mode == 'edit' && steps.cmd.outputs.request || '' }}
+          YT_PRIVACY: ${{ steps.youtube.outputs.youtube_privacy }}
+          YT_URL: ${{ steps.youtube.outputs.youtube_url }}
+          VIDEO_URL: ${{ steps.publish.outputs.url }}
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+        run: |
+          W="${{ steps.slug.outputs.work_dir }}"
+          if [ "$MODE" = "render" ]; then
+            node scripts/comment.ts render "$W" "$VIDEO_URL" "$YT_URL" > "$RUNNER_TEMP/body.md"
+          else
+            node scripts/comment.ts creative "$W" "${{ github.server_url }}/$GITHUB_REPOSITORY/tree/${{ steps.slug.outputs.branch }}/creative" "$PREVIEW_URL" > "$RUNNER_TEMP/body.md"
+          fi
+          gh pr comment "${{ inputs.pr_number }}" -R "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/body.md"
+
+      - name: Comment on the ClickUp task (optional)
+        if: success() && steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode == 'render' && env.CLICKUP_TOKEN != ''
+        working-directory: _fv_pipeline/template
+        env:
+          VIDEO_URL: ${{ steps.publish.outputs.url }}
+          YT_URL: ${{ steps.youtube.outputs.youtube_url }}
+          INPUT_CLICKUP: ${{ steps.cmd.outputs.clickup }}
+        run: |
+          ARGS=(--pr "$PR_REF" --video "$VIDEO_URL")
+          [ -n "$YT_URL" ] && ARGS+=(--youtube "$YT_URL")
+          [ -n "$INPUT_CLICKUP" ] && ARGS+=(--clickup "$INPUT_CLICKUP")
+          node scripts/clickup-comment.ts "${ARGS[@]}"
+
+      - name: Notify Slack, Discord, Linear, or webhook (optional)
+        if: success() && steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode == 'render'
+        continue-on-error: true
+        working-directory: _fv_pipeline/template
+        env:
+          VIDEO_URL: ${{ steps.publish.outputs.url }}
+          YT_URL: ${{ steps.youtube.outputs.youtube_url }}
+          CAPTIONS_URL: ${{ steps.publish.outputs.captions_url }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+          NOTIFY_WEBHOOK_SECRET: ${{ secrets.NOTIFY_WEBHOOK_SECRET }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          ARGS=(--pr "$PR_REF" --video "$VIDEO_URL")
+          [ -n "$YT_URL" ] && ARGS+=(--youtube "$YT_URL")
+          [ -n "$CAPTIONS_URL" ] && ARGS+=(--captions "$CAPTIONS_URL")
+          node scripts/notify.ts "${ARGS[@]}"
+
+      - name: Report failure on the PR
+        if: failure() && steps.cmd.outputs.should_run == 'true'
+        working-directory: _fv_pipeline/template
+        run: |
+          node scripts/comment.ts failed "${{ steps.slug.outputs.work_dir }}" "$RUN_URL" "${{ steps.cmd.outputs.mode }}" > "$RUNNER_TEMP/body.md"
+          gh pr comment "${{ inputs.pr_number }}" -R "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/body.md"
+
+      - name: Upload agent log
+        if: always() && steps.cmd.outputs.should_run == 'true' && steps.cmd.outputs.mode != 'render'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-log
+          path: |
+            ${{ runner.temp }}/agent.log
+            ${{ runner.temp }}/eleven.log
+          if-no-files-found: ignore
+
+      - name: Upload capture error screenshots
+        if: failure() && steps.cmd.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-errors
+          path: ${{ steps.slug.outputs.work_dir }}/captures/_error-*.png
+          if-no-files-found: ignore

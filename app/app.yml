@@ -1,0 +1,24 @@
+# GitHub App manifest. `npm start` without APP_ID opens http://localhost:3000, which registers
+# the App from this file in a few clicks (Probot's manifest flow).
+#
+# WARNING: Probot 14 sends only name, url, description and public from this file. It IGNORES
+# default_events and default_permissions, so the App is created with NO permissions and cannot
+# be installed. After the registration, set them by hand (README, "Set up" step 2). The lists
+# below are the source of truth for that step.
+name: gitcut
+description: Plans, captures and renders a feature video for a PR. Comment /video on a PR.
+url: https://github.com/zekooo0/gitcut
+hook_attributes:
+  url: https://example.invalid/ # replaced by the smee/host URL during setup
+public: false
+default_events:
+  - issue_comment
+  - pull_request
+default_permissions:
+  # source repos: read the PR, answer on it, react to the command
+  pull_requests: write
+  issues: write
+  contents: read
+  metadata: read
+  # video repo: start the workflow
+  actions: write

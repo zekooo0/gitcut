@@ -1,0 +1,35 @@
+{
+  "baseUrl": "https://staging.example.com",
+  "viewport": {
+    "width": 1440,
+    "height": 900,
+    "dpr": 2
+  },
+  "login": {
+    "url": "/login",
+    "fields": {
+      "input[name=email]": "DEMO_EMAIL",
+      "input[name=password]": "DEMO_PASSWORD"
+    },
+    "submit": "button[type=submit]",
+    "loggedOut": "/login"
+  },
+  "panel": "auto",
+  "hide": [
+    "#hubspot-messages-iframe-container",
+    "iframe[title*=chat i]"
+  ],
+  "brand": {
+    "logo": "brand/logo.svg",
+    "accent": "#2563EB"
+  },
+  "product": {
+    "name": "Acme App",
+    "description": "A short product walkthrough for Acme App.",
+    "audience": "users",
+    "website": "https://example.com"
+  },
+  "safetyRules": [
+    "Never submit destructive changes on shared staging data: avoid clicking Save, Delete, or Send."
+  ]
+}
