@@ -19,6 +19,15 @@ SKILL="$(cd "$HERE/../creative/shotcraft" && pwd)"
 C="$D/creative"
 RUNNER_TEMP="${RUNNER_TEMP:-/tmp}"
 
+# Use compiled dist/*.js when installed via npm (Node disallows TS type-stripping inside node_modules).
+if [ -f "$HERE/dist/lib/site.js" ]; then
+  SCRIPTS_DIR="$HERE/dist"
+  SCRIPT_EXT="js"
+else
+  SCRIPTS_DIR="$HERE/scripts"
+  SCRIPT_EXT="ts"
+fi
+
 # Detect mode: repo reel (repo.json, no Playwright captures) vs UI feature film (capture.json).
 REPO_MODE=0
 if [ -f "$D/repo.json" ] && [ ! -f "$D/capture.json" ]; then
@@ -26,11 +35,12 @@ if [ -f "$D/repo.json" ] && [ ! -f "$D/capture.json" ]; then
 fi
 
 # Read brand/product/format metadata from repo.json (repo mode) or site config (UI mode).
-SITE_META=$(REPO_MODE="$REPO_MODE" VIDEO_FORMAT="${VIDEO_FORMAT:-}" CAPTIONS_MODE="${CAPTIONS_MODE:-}" node --input-type=module -e '
+SITE_META=$(SCRIPTS_DIR="$SCRIPTS_DIR" SCRIPT_EXT="$SCRIPT_EXT" REPO_MODE="$REPO_MODE" VIDEO_FORMAT="${VIDEO_FORMAT:-}" CAPTIONS_MODE="${CAPTIONS_MODE:-}" node --input-type=module -e '
   import fs from "node:fs";
   import path from "node:path";
-  import { loadSiteForDir } from "./scripts/lib/site.ts";
-  import { resolveFormat } from "./scripts/lib/format.ts";
+  import { pathToFileURL } from "node:url";
+  const { loadSiteForDir } = await import(pathToFileURL(path.join(process.env.SCRIPTS_DIR, `lib/site.${process.env.SCRIPT_EXT}`)).href);
+  const { resolveFormat } = await import(pathToFileURL(path.join(process.env.SCRIPTS_DIR, `lib/format.${process.env.SCRIPT_EXT}`)).href);
   const dir = process.argv[1];
   const isRepo = process.env.REPO_MODE === "1";
   const s = isRepo
@@ -92,6 +102,7 @@ mkdir -p "$C/input/brand" "$C/out"
 if [ -z "${EDIT_REQUEST:-}" ]; then
   # Empty Remotion project (setup only, no look), installed before the agent starts.
   cp -r "$HERE/../creative/starter" "$C/film"
+  chmod -R u+w "$C/film"
   # Set starter composition dimensions to the chosen canvas format.
   FMT_WIDTH="$FMT_WIDTH" FMT_HEIGHT="$FMT_HEIGHT" node --input-type=module -e '
     import fs from "node:fs";
@@ -159,7 +170,7 @@ fi
 
 # Render the brief template safely with Node (avoids sed escaping bugs on &, \, |, or quotes).
 TITLE="$TITLE" SKILL="$SKILL" LOGO="$LOGO" ACCENT="$ACCENT" AUDIENCE="$AUDIENCE" \
-ELEVEN_CMD="node $HERE/scripts/eleven.ts" AUDIO_MODE="$AUDIO_MODE" \
+ELEVEN_CMD="node $SCRIPTS_DIR/eleven.$SCRIPT_EXT" AUDIO_MODE="$AUDIO_MODE" \
 FMT_WIDTH="$FMT_WIDTH" FMT_HEIGHT="$FMT_HEIGHT" FMT_GUIDANCE="$FMT_GUIDANCE" CAPTIONS_ON="$CAPTIONS_ON" \
 node --input-type=module -e '
   import fs from "node:fs";
@@ -285,9 +296,21 @@ test -s NOTES.md || { echo "no NOTES.md"; exit 1; }
 if [ -n "${EDIT_REQUEST:-}" ]; then test -s CHANGES.md || { echo "no CHANGES.md"; exit 1; }; else rm -f CHANGES.md; fi
 jq -e '.scripts.render' film/package.json >/dev/null || { echo "film/package.json has no render script"; exit 1; }
 test -f film/package-lock.json || { echo "film/package-lock.json missing"; exit 1; }
+run_ffprobe() {
+  if command -v ffprobe >/dev/null 2>&1; then
+    ffprobe "$@"
+  elif [ -x "$HERE/node_modules/.bin/remotion" ]; then
+    "$HERE/node_modules/.bin/remotion" ffprobe "$@"
+  elif [ -x "$HERE/../node_modules/.bin/remotion" ]; then
+    "$HERE/../node_modules/.bin/remotion" ffprobe "$@"
+  else
+    npx --no-install remotion ffprobe "$@"
+  fi
+}
+
 # Sound checks (only when running in elevenlabs audio mode).
 if [ "$AUDIO_MODE" = "elevenlabs" ]; then
-  npx --prefix "$HERE" remotion ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 out/video.mp4 \
+  run_ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 out/video.mp4 \
     | grep -q audio || { echo "out/video.mp4 has no audio track"; exit 1; }
   USAGE=$(curl -sf "$ELEVEN_ENDPOINT/usage" || echo '{}')
   echo "elevenlabs: $USAGE"
@@ -298,11 +321,11 @@ if [ "$AUDIO_MODE" = "elevenlabs" ]; then
 fi
 rm -rf input                        # rebuilt from the captures on every run; never committed
 # Export .srt and .vtt subtitle tracks if the agent wrote captions.json.
-node "$HERE/scripts/subtitles.ts" "$(pwd)/.." || true
+node "$SCRIPTS_DIR/subtitles.$SCRIPT_EXT" "$(pwd)/.." || true
 
 # 12 stills (one every ~3 s) as the contact sheet. Optional: needs a full system ffmpeg
 # (Remotion's bundled build lacks these filters); the preview MP4 is the real output.
-DUR=$(npx --prefix "$HERE" remotion ffprobe -v error -show_entries format=duration -of csv=p=0 out/video.mp4)
+DUR=$(run_ffprobe -v error -show_entries format=duration -of csv=p=0 out/video.mp4)
 if command -v ffmpeg >/dev/null; then
   ffmpeg -v error -y -i out/video.mp4 -vf "fps=12/$DUR,scale=640:-1,tile=4x3:padding=6:color=0x111111" \
     -frames:v 1 sheet.png || echo "::warning::contact sheet failed"

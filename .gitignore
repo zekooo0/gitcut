@@ -6,4 +6,6 @@ out
 *.pem
 template/public/features/*/film.compiled.json
 .auth/
+.gitcut/
+*.tgz
 creative-proto/

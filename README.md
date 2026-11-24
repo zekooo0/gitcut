@@ -26,10 +26,10 @@ and SFX—or crisp silent/captioned output.
 
 ## Quickstart 1: Add to any GitHub repo (no server needed)
 
-Run one command inside your app repo (or copy the two files manually):
+Run one command inside your app repo (no clone needed!):
 
 ```bash
-node /path/to/gitcut/template/scripts/cli.ts setup-github --auto-preview --name "My App"
+npx gitcut-cli setup-github --auto-preview --name "My App"
 ```
 
 That creates `.gitcut.json` and `.github/workflows/gitcut.yml` (copied from [examples/gitcut.yml](examples/gitcut.yml)) and prints the direct link to your repo's GitHub Secrets page.
@@ -50,29 +50,27 @@ preview/final MP4s are published as GitHub Releases using `GITHUB_TOKEN`.
 Requirements: Node 24+, Claude Code CLI signed in, `jq`, optional `ffmpeg` (contact sheets & SFX).
 
 ```bash
-cd template
-npm ci
+# Install globally (optional — gives you the short `gitcut` command):
+npm install -g gitcut-cli
 
-# Check your setup in 2 seconds:
-node scripts/cli.ts doctor
-
-# Launch the interactive wizard (no flags to remember!):
-node scripts/cli.ts
+# Or run directly with npx (no install needed!):
+npx gitcut-cli doctor       # Check your setup in 2 seconds
+npx gitcut-cli              # Launch the interactive wizard (no flags to remember!)
 
 # Or run directly via flags:
 # 1. Generate a 15-30s repository reel from ANY GitHub repo or local folder (no browser needed!)
-node scripts/cli.ts repo zekooo0/gitcut --format vertical --captions
+npx gitcut-cli repo zekooo0/gitcut --format vertical --captions
 
-# 2. Generate a live-UI feature film (install Playwright once: npx playwright install chromium)
-node scripts/cli.ts create \
+# 2. Generate a live-UI feature film (install Playwright browser once: npx playwright install chromium)
+npx gitcut-cli create \
   --url http://localhost:3000 \
   --title "Dark mode toggle" \
   --brief "Users can now switch between light and dark themes from Settings." \
   --routes /settings
 
 # 3. Iterate in plain English, then render the final MP4:
-node scripts/cli.ts edit public/features/dark-mode-toggle "shorter intro, punchier end card"
-node scripts/cli.ts render public/features/dark-mode-toggle --out ./dark-mode.mp4
+npx gitcut-cli edit .gitcut/dark-mode-toggle "shorter intro, punchier end card"
+npx gitcut-cli render .gitcut/dark-mode-toggle --out ./dark-mode.mp4
 ```
 
 - Set `ELEVENLABS_API_KEY` to enable automatic voice-over, music, and SFX (the CLI starts and stops the isolated local proxy automatically). Omit it or pass `--audio silent` for silent/captioned videos.

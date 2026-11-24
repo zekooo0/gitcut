@@ -20,10 +20,11 @@
  *   gitcut help
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createInterface } from "node:readline/promises";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { slugifyTitle } from "./brief.ts";
 import { detectGitHubRepo, formatDoctorReport, runDoctorChecks } from "./lib/doctor.ts";
@@ -31,6 +32,9 @@ import { slugFor } from "./slug.ts";
 
 const TEMPLATE_DIR = new URL("..", import.meta.url).pathname;
 const REPO_ROOT = resolve(TEMPLATE_DIR, "..");
+const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
+const SCRIPT_EXT = import.meta.url.endsWith(".js") ? "js" : "ts";
+const scriptPath = (name: string) => join(SCRIPTS_DIR, `${name}.${SCRIPT_EXT}`);
 
 export const CLI_HELP = `GitCut CLI
 
@@ -199,7 +203,7 @@ async function startElevenProxyIfNeeded(audio: string): Promise<{ mode: string; 
 
   const env = { ...process.env };
   delete env.ELEVENLABS_API_KEY;
-  const child: ChildProcess = spawn("node", [join(TEMPLATE_DIR, "scripts/eleven.ts"), "serve"], {
+  const child: ChildProcess = spawn("node", [scriptPath("eleven"), "serve"], {
     cwd: TEMPLATE_DIR,
     env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -221,6 +225,10 @@ async function startElevenProxyIfNeeded(audio: string): Promise<{ mode: string; 
   process.exit(1);
 }
 
+function defaultOutputDir(slug: string): string {
+  return join(process.cwd(), ".gitcut", slug);
+}
+
 function resolveFeatureDir(args: {
   out?: string;
   slug?: string;
@@ -229,14 +237,13 @@ function resolveFeatureDir(args: {
   brief?: string;
 }): string {
   if (args.out) return resolve(args.out);
-  if (args.slug) return join(TEMPLATE_DIR, "public/features", args.slug);
+  if (args.slug) return defaultOutputDir(args.slug);
   if (args.pr) {
-    // PR slug is resolved by brief.ts from the PR's head branch; caller passes --out for create.
     const safe = args.pr.replace(/[^a-z0-9]+/gi, "-").toLowerCase().replace(/^-|-$/g, "");
-    return join(TEMPLATE_DIR, "public/features", safe);
+    return defaultOutputDir(safe);
   }
   const title = args.title?.trim() || args.brief?.trim().split("\n")[0] || "gitcut-video";
-  return join(TEMPLATE_DIR, "public/features", slugifyTitle(title));
+  return defaultOutputDir(slugifyTitle(title));
 }
 
 async function runCreative(
@@ -310,8 +317,8 @@ async function runWizard() {
       const slug = slugifyTitle(
         target.replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "").replace(/\/$/, "") + "-reel",
       );
-      const outDir = join(TEMPLATE_DIR, "public/features", slug);
-      runSync("node", [join(TEMPLATE_DIR, "scripts/repo-brief.ts"), target, "--out", outDir], { cwd: process.cwd() });
+      const outDir = defaultOutputDir(slug);
+      runSync("node", [scriptPath("repo-brief"), target, "--out", outDir], { cwd: process.cwd() });
       await runCreative(outDir, { audio, format, captions });
       console.log(`\nRepository reel ready: ${join(outDir, "creative/out/video.mp4")}`);
       return;
@@ -326,11 +333,11 @@ async function runWizard() {
       console.error("A short description is required.");
       process.exit(1);
     }
-    const outDir = join(TEMPLATE_DIR, "public/features", slugifyTitle(title));
-    const briefArgs = [join(TEMPLATE_DIR, "scripts/brief.ts"), "--out", outDir, "--url", url, "--title", title, "--brief", brief];
+    const outDir = defaultOutputDir(slugifyTitle(title));
+    const briefArgs = [scriptPath("brief"), "--out", outDir, "--url", url, "--title", title, "--brief", brief];
     if (routes) briefArgs.push("--routes", routes);
     runSync("node", briefArgs, { cwd: process.cwd() });
-    runSync("node", [join(TEMPLATE_DIR, "scripts/capture.ts"), outDir]);
+    runSync("node", [scriptPath("capture"), outDir]);
     await runCreative(outDir, { audio, format, captions });
     console.log(`\nPreview video ready: ${join(outDir, "creative/out/video.mp4")}`);
   } finally {
@@ -470,8 +477,8 @@ async function main() {
         .replace(/\.git$/i, "")
         .replace(/\/$/, "") + "-reel",
     );
-    const outDir = values.out ? resolve(values.out) : join(TEMPLATE_DIR, "public/features", slug);
-    const briefArgs = [join(TEMPLATE_DIR, "scripts/repo-brief.ts"), target, "--out", outDir];
+    const outDir = values.out ? resolve(values.out) : defaultOutputDir(slug);
+    const briefArgs = [scriptPath("repo-brief"), target, "--out", outDir];
     if (values.ref) briefArgs.push("--ref", values.ref);
     if (values.accent) briefArgs.push("--accent", values.accent);
     runSync("node", briefArgs, { cwd: process.cwd() });
@@ -510,7 +517,7 @@ async function main() {
     });
 
     const outDir = resolveFeatureDir(values);
-    const briefArgs = [join(TEMPLATE_DIR, "scripts/brief.ts"), "--out", outDir];
+    const briefArgs = [scriptPath("brief"), "--out", outDir];
     if (values.pr) briefArgs.push("--pr", values.pr);
     if (values.url) briefArgs.push("--url", values.url);
     if (values["auto-preview"]) briefArgs.push("--auto-preview");
@@ -531,7 +538,7 @@ async function main() {
     runSync("node", briefArgs, { cwd: process.cwd() });
     if (cmd === "plan" || values["prompt-only"]) return;
 
-    runSync("node", [join(TEMPLATE_DIR, "scripts/capture.ts"), outDir]);
+    runSync("node", [scriptPath("capture"), outDir]);
     await runCreative(outDir, {
       pr: values.pr,
       audio: values.audio!,
@@ -548,7 +555,7 @@ async function main() {
       console.error("usage: gitcut capture <dir>");
       process.exit(2);
     }
-    runSync("node", [join(TEMPLATE_DIR, "scripts/capture.ts"), resolve(dir)]);
+    runSync("node", [scriptPath("capture"), resolve(dir)]);
     return;
   }
 
@@ -612,7 +619,7 @@ async function main() {
     }
     runSync("npm", ["ci", "--no-audit", "--no-fund"], { cwd: filmDir });
     runSync("npm", ["run", "render"], { cwd: filmDir });
-    runSync("node", [join(TEMPLATE_DIR, "scripts/subtitles.ts"), absDir]);
+    runSync("node", [scriptPath("subtitles"), absDir]);
     const rendered = join(absDir, "creative/out/video.mp4");
     if (values.out) {
       const dest = resolve(values.out);
@@ -631,12 +638,12 @@ async function main() {
       console.error("usage: gitcut subtitles <dir>");
       process.exit(2);
     }
-    runSync("node", [join(TEMPLATE_DIR, "scripts/subtitles.ts"), resolve(dir)]);
+    runSync("node", [scriptPath("subtitles"), resolve(dir)]);
     return;
   }
 
   if (cmd === "notify") {
-    runSync("node", [join(TEMPLATE_DIR, "scripts/notify.ts"), ...rest]);
+    runSync("node", [scriptPath("notify"), ...rest]);
     return;
   }
 
@@ -645,7 +652,7 @@ async function main() {
       console.error("usage: gitcut discover <site-or-url> <path> [--json]");
       process.exit(2);
     }
-    runSync("node", [join(TEMPLATE_DIR, "scripts/discover.ts"), ...rest]);
+    runSync("node", [scriptPath("discover"), ...rest]);
     return;
   }
 
@@ -656,6 +663,9 @@ async function main() {
 // Re-export slug helper so tests and callers can share it cleanly.
 export { slugFor };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isMain =
+  Boolean(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+
+if (isMain) {
   await main();
 }

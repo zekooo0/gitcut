@@ -1,0 +1,64 @@
+{
+  "name": "gitcut-cli",
+  "version": "0.1.0",
+  "description": "Turn pull requests, live web apps, or GitHub READMEs into AI-directed Remotion feature videos",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "gitcut": "./template/dist/cli.js",
+    "gitcut-cli": "./template/dist/cli.js"
+  },
+  "scripts": {
+    "build": "npm --prefix template run build",
+    "prepack": "npm run build"
+  },
+  "files": [
+    "README.md",
+    "LICENSE",
+    "creative/BRIEF.md",
+    "creative/EDIT.md",
+    "creative/REPO.md",
+    "creative/SHOTS.md",
+    "creative/starter/package.json",
+    "creative/starter/package-lock.json",
+    "creative/starter/remotion.config.ts",
+    "creative/starter/tsconfig.json",
+    "creative/starter/src/",
+    "creative/shotcraft/",
+    "examples/gitcut.yml",
+    "template/package.json",
+    "template/docs/",
+    "template/public/brand/",
+    "template/sites/",
+    "template/dist/",
+    "template/scripts/creative.sh"
+  ],
+  "dependencies": {
+    "@remotion/cli": "4.0.541",
+    "playwright": "^1.65.0",
+    "sharp": "^0.35.5"
+  },
+  "keywords": [
+    "gitcut",
+    "remotion",
+    "playwright",
+    "claude-code",
+    "github-actions",
+    "product-video",
+    "demo-video",
+    "changelog",
+    "video-generation",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zekooo0/gitcut.git"
+  },
+  "homepage": "https://github.com/zekooo0/gitcut#readme",
+  "bugs": {
+    "url": "https://github.com/zekooo0/gitcut/issues"
+  }
+}

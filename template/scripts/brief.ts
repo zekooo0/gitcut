@@ -24,12 +24,15 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { loadSite, type Site } from "./lib/site.ts";
 import { detectPreviewUrl, type CommentCandidate, type DeploymentCandidate } from "./lib/preview-url.ts";
 import { slugFor } from "./slug.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
+const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
+const SCRIPT_EXT = import.meta.url.endsWith(".js") ? "js" : "ts";
 
 /* ---------------- lint: a well-formed capture ---------------- */
 export type Shot = { name: string; kind: string; url?: string; elements?: Record<string, unknown> };
@@ -237,7 +240,7 @@ async function main() {
   };
 
   const discover = (siteArg: string, path: string) => {
-    const out = execFileSync("node", [join(ROOT, "scripts/discover.ts"), siteArg, path, "--json"], {
+    const out = execFileSync("node", [join(SCRIPTS_DIR, `discover.${SCRIPT_EXT}`), siteArg, path, "--json"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 20 * 1024 * 1024,

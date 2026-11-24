@@ -32,6 +32,7 @@
     "typescript": "5.9.3"
   },
   "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/cli.js",
     "typecheck": "tsc",
     "test": "node --test \"scripts/**/*.test.ts\""
   },
